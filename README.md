@@ -29,7 +29,7 @@ A rich-text editor tailored for developers.
 Orbitae is currently in alpha testing. If you do not have an Apple Developer account, you may encounter security warnings when trying to run the app.
 
 ### Download
-Go to the [Releases](https://github.com/VisheshSaluja/Switchboard/releases) page and download the latest `.dmg` for macOS (or `.msi`/`.exe` for Windows).
+Go to the [Releases](https://github.com/VisheshSaluja/Orbitae/releases) page and download the latest `.dmg` for macOS (or `.msi`/`.exe` for Windows).
 
 ### ⚠️ macOS Troubleshooting ("App is damaged")
 Since this app is not yet signed with an Apple Developer Certificate, you might see a "Orbitae is damaged and can't be opened" error. Currently, to bypass Apple's security check for unsigned apps, follow these steps:
