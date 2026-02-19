@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ArrowRight, Terminal, Database, Lock, Layout, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { InteractiveDemo } from '../components/demo/InteractiveDemo';
+import { AIOrbit } from '../components/landing/AIOrbit';
 import { RequestAccessModal } from '../components/landing/RequestAccessModal';
 import { submitWaitlist } from './actions';
 
@@ -149,6 +150,9 @@ export default function Home() {
               <InteractiveDemo />
            </motion.div>
         </section>
+
+        {/* AI Orbit Section */}
+        <AIOrbit />
 
         {/* Features Grid */}
         <section className="max-w-7xl mx-auto px-6 grid md:grid-cols-3 gap-8 mb-40">
