@@ -114,6 +114,9 @@ export default function Home() {
           </motion.div>
         </section>
 
+        {/* AI Orbit Section */}
+        <AIOrbit />
+
         {/* Interactive Demo */}
         <section className="max-w-6xl mx-auto px-6 mb-40 min-h-[600px] flex flex-col items-center justify-center relative">
            {!isDemoActive && (
@@ -150,9 +153,6 @@ export default function Home() {
               <InteractiveDemo />
            </motion.div>
         </section>
-
-        {/* AI Orbit Section */}
-        <AIOrbit />
 
         {/* Features Grid */}
         <section className="max-w-7xl mx-auto px-6 grid md:grid-cols-3 gap-8 mb-40">
