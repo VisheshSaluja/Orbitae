@@ -1,6 +1,7 @@
 'use server';
 
 import { z } from 'zod';
+import { sql } from '@vercel/postgres';
 
 // Schema for Waitlist
 const WaitlistSchema = z.object({
@@ -39,17 +40,17 @@ export async function submitWaitlist(prevState: WaitlistState, formData: FormDat
         return { success: false, error: 'Invalid email address' };
     }
 
-    // ----------------------------------------------------------------------
-    // [DATA PRIVACY] Save this data to your own database.
-    // We recommend using Vercel Postgres or Supabase.
-    // Example for Vercel Postgres:
-    // await sql`INSERT INTO waitlist (email) VALUES (${result.data.email})`;
-    // ----------------------------------------------------------------------
-
-    console.log('[WAITLIST] New submission:', result.data.email);
-
-    // Simulate delay for demo effect
-    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+        // Only attempt DB write if configured
+        if (process.env.POSTGRES_URL) {
+            await sql`INSERT INTO waitlist (email) VALUES (${result.data.email}) ON CONFLICT DO NOTHING`;
+        } else {
+            console.log('[DEV] Waitlist submission (no DB configured):', result.data.email);
+        }
+    } catch (error) {
+        console.error('Database Error:', error);
+        return { success: false, error: 'Failed to save subscription.' };
+    }
 
     return { success: true, message: 'Added to the waitlist!' };
 }
@@ -75,20 +76,29 @@ export async function submitAlphaRequest(prevState: AlphaRequestState, formData:
         };
     }
 
-    // ----------------------------------------------------------------------
-    // [SENSITIVE DATA] Save this securely. Do NOT log strict personal data in prod.
-    // Example for Vercel Postgres:
-    // await sql`
-    //   INSERT INTO alpha_requests (name, email, role, company, social_url, reason, agreed_nda)
-    //   VALUES (${data.name}, ${data.email}, ${data.role}, ${data.company}, ${data.socialUrl}, ${data.reason}, ${data.agreeToNDA})
-    // `;
-    // ----------------------------------------------------------------------
-
-    if (process.env.NODE_ENV === 'development') {
-        console.log('[ALPHA REQUEST] New detailed submission:', result.data);
+    try {
+        if (process.env.POSTGRES_URL) {
+            await sql`
+                INSERT INTO alpha_requests (name, email, role, company, social_url, reason, agreed_nda)
+                VALUES (
+                    ${result.data.name},
+                    ${result.data.email},
+                    ${result.data.role},
+                    ${result.data.company || ''},
+                    ${result.data.socialUrl},
+                    ${result.data.reason},
+                    ${result.data.agreeToNDA}
+                )
+            `;
+        } else {
+            if (process.env.NODE_ENV === 'development') {
+                console.log('[DEV] Alpha Request (no DB configured):', result.data);
+            }
+        }
+    } catch (error) {
+        console.error('Database Error:', error);
+        return { success: false, message: 'Failed to submit request. Please try again.' };
     }
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
 
     return { success: true, message: 'Request received. We will contact you soon.' };
 }

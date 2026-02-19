@@ -165,8 +165,8 @@ export async function invokeCommand<T>(cmd: string, args: any = {}): Promise<T> 
 
     if (cmd === 'get_git_history') {
         return [
-            { hash: 'a1b2c3d', message: 'feat: implement auth middleware', author: 'Vishesh', date: '2 hours ago', parents: ['d4e5f6g'], refs: 'HEAD -> main' },
-            { hash: 'd4e5f6g', message: 'fix: database connection timeout', author: 'Vishesh', date: '5 hours ago', parents: ['h7i8j9k'], refs: '' },
+            { hash: 'a1b2c3d', message: 'feat: implement auth middleware', author: 'John Doe', date: '2 hours ago', parents: ['d4e5f6g'], refs: 'HEAD -> main' },
+            { hash: 'd4e5f6g', message: 'fix: database connection timeout', author: 'Jane Doe', date: '5 hours ago', parents: ['h7i8j9k'], refs: '' },
             { hash: 'h7i8j9k', message: 'chore: update dependencies', author: 'Bot', date: '1 day ago', parents: [], refs: '' }
         ] as unknown as T;
     }
