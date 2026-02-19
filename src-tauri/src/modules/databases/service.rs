@@ -1,4 +1,4 @@
-use super::models::{ProjectConnection, ConnectionConfig, TableInfo, QueryResult};
+use super::models::{ProjectConnection, TableInfo, QueryResult};
 use super::repository::DatabaseRepository;
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -12,8 +12,7 @@ use sqlx::SqlitePool;
 // For the MVP, let's just create a pool, run the query, and close it. 
 // Optimization: Keep a map in a Mutex wrapper managed by Tauri.
 
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+
 
 // We need an enum to hold different pool types
 pub enum DbPool {
@@ -56,7 +55,7 @@ impl DatabaseService {
         match kind {
             "postgres" => {
                 use sqlx::postgres::PgConnectOptions;
-                use std::str::FromStr;
+
                 
                 let host = config["host"].as_str().unwrap_or("localhost");
                 let port = config["port"].as_u64().unwrap_or(5432) as u16;
@@ -117,7 +116,7 @@ impl DatabaseService {
          
          match kind {
             "postgres" => {
-                use sqlx::postgres::{PgConnectOptions, PgRow};
+                use sqlx::postgres::PgConnectOptions;
                 use sqlx::Row;
                 use sqlx::Column;
                 
@@ -166,7 +165,7 @@ impl DatabaseService {
                 })
             },
              "sqlite" => {
-                use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
+                use sqlx::sqlite::SqliteConnectOptions;
                 use sqlx::Row;
                 use sqlx::Column;
                 use std::str::FromStr;

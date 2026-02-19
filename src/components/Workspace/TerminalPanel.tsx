@@ -85,7 +85,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectId, initial
     // Connect to Backend
     const initTerminal = async () => {
         try {
-            term.writeln('\x1b[38;5;75m⚡ Switchboard Terminal connecting...\x1b[0m\r\n');
+            term.writeln('\x1b[38;5;75m⚡ Orbitae Terminal connecting...\x1b[0m\r\n');
             
             const sessionId = await invokeCommand<string>('spawn_shell', { 
                 projectId,

@@ -78,7 +78,7 @@ impl ProjectService {
     // Keys
     // Keys
     pub async fn create_key(&self, project_id: String, name: String, secret: String) -> Result<super::models::ProjectKey> {
-        let vault = crate::modules::vault::service::VaultService::new("switchboard-app");
+        let vault = crate::modules::vault::service::VaultService::new("orbitae-app");
         let key_reference = uuid::Uuid::new_v4().to_string();
         
         // Store in Vault
@@ -100,12 +100,12 @@ impl ProjectService {
     }
 
     pub async fn reveal_secret(&self, key_reference: &str) -> Result<String> {
-        let vault = crate::modules::vault::service::VaultService::new("switchboard-app");
+        let vault = crate::modules::vault::service::VaultService::new("orbitae-app");
         vault.get_secret(key_reference)
     }
 
     pub async fn delete_key(&self, id: &str, key_reference: &str) -> Result<()> {
-        let vault = crate::modules::vault::service::VaultService::new("switchboard-app");
+        let vault = crate::modules::vault::service::VaultService::new("orbitae-app");
         
         // Delete from Vault
         let _ = vault.delete_secret(key_reference); 
@@ -205,7 +205,7 @@ impl ProjectService {
         let project = self.repo.get_project(project_id).await?;
         if let Some(proj) = project {
             let project_path = crate::shared::utils::expand_path(&proj.path);
-            let images_dir = Path::new(&project_path).join(".switchboard").join("images");
+            let images_dir = Path::new(&project_path).join(".orbitae").join("images");
 
             // Create dir
             if !images_dir.exists() {

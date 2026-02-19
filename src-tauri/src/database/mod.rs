@@ -10,8 +10,27 @@ pub async fn init_pool<P: AsRef<Path>>(app_data_dir: P) -> Result<SqlitePool> {
         fs::create_dir_all(app_data_dir)?;
     }
     
-    let db_path = app_data_dir.join("switchboard.db");
+    let db_path = app_data_dir.join("orbitae.db");
     
+    // Check for migration from Switchboard (old identifier: com.vishesh.switchboard)
+    if !db_path.exists() {
+        if let Some(parent) = app_data_dir.parent() {
+            let old_app_dir = parent.join("com.vishesh.switchboard");
+            let old_db_path = old_app_dir.join("switchboard.db");
+            
+            if old_db_path.exists() {
+                println!("Migrating database from {:?} to {:?}", old_db_path, db_path);
+                if let Err(e) = fs::copy(&old_db_path, &db_path) {
+                    eprintln!("Failed to copy old database: {}", e);
+                } else {
+                    println!("Database migration successful!");
+                }
+            } else {
+                 println!("No old database found at {:?}", old_db_path);
+            }
+        }
+    }
+
     // Create connection options
     // Log intent to create DB
     println!("Database path: {:?}", db_path);

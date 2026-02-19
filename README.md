@@ -1,6 +1,6 @@
-# Switchboard
+# Orbitae
 
-Switchboard is a powerful, developer-focused desktop workspace manager designed to streamline your development workflow. It acts as a central hub for managing your projects, running commands, keeping notes, and monitoring processes—all without leaving the app.
+Orbitae is a powerful, developer-focused desktop workspace manager designed to streamline your development workflow. It acts as a central hub for managing your projects, running commands, keeping notes, and monitoring processes—all without leaving the app.
 
 ## Features
 
@@ -26,13 +26,13 @@ A rich-text editor tailored for developers.
 
 ## Installation & Testing (Alpha)
 
-Switchboard is currently in alpha testing. If you do not have an Apple Developer account, you may encounter security warnings when trying to run the app.
+Orbitae is currently in alpha testing. If you do not have an Apple Developer account, you may encounter security warnings when trying to run the app.
 
 ### Download
 Go to the [Releases](https://github.com/VisheshSaluja/Switchboard/releases) page and download the latest `.dmg` for macOS (or `.msi`/`.exe` for Windows).
 
 ### ⚠️ macOS Troubleshooting ("App is damaged")
-Since this app is not yet signed with an Apple Developer Certificate, you might see a "Switchboard is damaged and can't be opened" error. Currently, to bypass Apple's security check for unsigned apps, follow these steps:
+Since this app is not yet signed with an Apple Developer Certificate, you might see a "Orbitae is damaged and can't be opened" error. Currently, to bypass Apple's security check for unsigned apps, follow these steps:
 
 **Option 1: Right-Click Open**
 1.  Right-click the app in your Applications folder.
@@ -42,13 +42,13 @@ Since this app is not yet signed with an Apple Developer Certificate, you might 
 **Option 2: Terminal Command (If Option 1 fails)**
 Run this command in your terminal to remove the quarantine flag:
 ```bash
-xattr -cr /Applications/Switchboard.app
+xattr -cr /Applications/Orbitae.app
 ```
-(Replace `/Applications/Switchboard.app` with the actual path if you installed it elsewhere).
+(Replace `/Applications/Orbitae.app` with the actual path if you installed it elsewhere).
 
 ## Tech Stack
 
-Building a high-performance desktop app requires a robust stack. Switchboard is built on:
+Building a high-performance desktop app requires a robust stack. Orbitae is built on:
 
 ### Frontend
 -   **Framework**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
@@ -69,14 +69,14 @@ Building a high-performance desktop app requires a robust stack. Switchboard is 
 
 ## Architecture
 
-Switchboard follows a **local-first** architecture.
+Orbitae follows a **local-first** architecture.
 -   All metadata (projects, notes, snippets, settings) is stored locally in an SQLite database.
 -   It interacts directly with your filesystem to run commands and manage git repositories.
 -   No cloud dependency—your data stays on your machine.
 
 ## Development
 
-To run Switchboard locally:
+To run Orbitae locally:
 
 1.  **Prerequisites**: Ensure you have Node.js, Rust, and Tauri prerequisites installed.
 2.  **Install Dependencies**:

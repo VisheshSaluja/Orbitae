@@ -17,7 +17,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewProject }) => {
       <div className="p-6">
         <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
-          Switchboard
+          Orbitae
         </h1>
       </div>
 

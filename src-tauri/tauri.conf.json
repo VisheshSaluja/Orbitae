@@ -1,18 +1,18 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "switchboard",
-  "version": "0.1.13",
-  "identifier": "com.vishesh.switchboard",
+  "productName": "Orbitae",
+  "version": "0.1.14",
+  "identifier": "com.vishesh.orbitae",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
-        "title": "Switchboard",
+        "title": "Orbitae",
         "width": 800,
         "height": 600,
         "resizable": true,

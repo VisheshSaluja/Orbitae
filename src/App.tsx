@@ -234,7 +234,7 @@ function App() {
                     <div className="p-4 rounded-full bg-accent mb-6 shadow-xl">
                          <Plus className="w-10 h-10 text-primary" />
                     </div>
-                    <h3 className="text-xl font-bold tracking-tight text-foreground">Welcome to Switchboard</h3>
+                    <h3 className="text-xl font-bold tracking-tight text-foreground">Welcome to Orbitae</h3>
                     <p className="text-muted-foreground mt-2 mb-8 max-w-sm">
                         Create your first developer workspace to manage secrets, environments, and terminals.
                     </p>
@@ -258,7 +258,7 @@ function App() {
                 <DialogHeader>
                     <DialogTitle>Import Existing Project</DialogTitle>
                     <DialogDescription>
-                        Import a local folder or Git repository into Switchboard.
+                        Import a local folder or Git repository into Orbitae.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">

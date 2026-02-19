@@ -46,7 +46,7 @@ mod tests {
     #[test]
     #[ignore] // Ignored by default to avoid CI/headless issues. Run with -- --ignored to test.
     fn test_vault_flow() {
-        let service = VaultService::new("switchboard-test");
+        let service = VaultService::new("orbitae-test");
         let key = "test-key";
         let secret = "test-secret-value";
 
