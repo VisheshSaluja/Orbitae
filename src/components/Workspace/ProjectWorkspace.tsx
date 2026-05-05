@@ -10,9 +10,11 @@ import { ScriptRunner } from './ScriptRunner';
 import { ProcessManager } from './ProcessManager';
 import { LaunchpadPanel } from './LaunchpadPanel';
 import { DatabasePanel } from './DatabasePanel';
+import { AgentPanel } from './AgentPanel';
 import type { Project } from '../../types';
-import { FolderOpen, ScrollText, Play, LayoutDashboard, Lock, GitBranch, Terminal, Rocket, Database } from 'lucide-react';
+import { FolderOpen, ScrollText, Play, LayoutDashboard, Lock, GitBranch, Terminal, Rocket, Database, Bot } from 'lucide-react';
 import { toast } from 'sonner';
+import { ErrorBoundary } from '../ui/error-boundary';
 
 interface ProjectWorkspaceProps {
     project: Project;
@@ -61,6 +63,10 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                                     <Rocket className="w-3.5 h-3.5" />
                                     Launchpad
                                 </TabsTrigger>
+                                <TabsTrigger value="agent" className="gap-2">
+                                    <Bot className="w-3.5 h-3.5" />
+                                    Agent
+                                </TabsTrigger>
                                 <TabsTrigger value="scripts" className="gap-2">
                                     <Play className="w-3.5 h-3.5" />
                                     Scripts
@@ -94,61 +100,87 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                         
                         <div className="flex-1 overflow-hidden p-0 bg-background relative">
                             {activeTab === 'overview' && (
-                                <OverviewPanel project={project} onNavigate={setActiveTab} />
+                                <ErrorBoundary>
+                                    <OverviewPanel project={project} onNavigate={setActiveTab} />
+                                </ErrorBoundary>
                             )}
-                            
+
                             <div className={activeTab === 'launchpad' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'launchpad' && (
-                                    <LaunchpadPanel projectId={project.id} projectPath={project.path} />
+                                    <ErrorBoundary>
+                                        <LaunchpadPanel projectId={project.id} projectPath={project.path} />
+                                    </ErrorBoundary>
+                                )}
+                            </div>
+
+                            <div className={activeTab === 'agent' ? 'h-full' : 'hidden h-full'}>
+                                {activeTab === 'agent' && (
+                                    <ErrorBoundary>
+                                        <AgentPanel projectId={project.id} project={project} />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'scripts' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'scripts' && (
-                                    <ScriptRunner path={project.path} onNavigate={setActiveTab} />
+                                    <ErrorBoundary>
+                                        <ScriptRunner path={project.path} onNavigate={setActiveTab} />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'git' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'git' && (
-                                    <GitPanel path={project.path} />
+                                    <ErrorBoundary>
+                                        <GitPanel path={project.path} />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'keys' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'keys' && (
-                                    <KeysPanel 
-                                        projectId={project.id} 
-                                    />
+                                    <ErrorBoundary>
+                                        <KeysPanel
+                                            projectId={project.id}
+                                        />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'snippets' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'snippets' && (
-                                    <SnippetsPanel 
-                                        projectId={project.id} 
-                                        onRun={handleRunSnippet} 
-                                    />
+                                    <ErrorBoundary>
+                                        <SnippetsPanel
+                                            projectId={project.id}
+                                            onRun={handleRunSnippet}
+                                        />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'notes' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'notes' && (
-                                    <NotesPanel 
-                                        projectId={project.id} 
-                                    />
+                                    <ErrorBoundary>
+                                        <NotesPanel
+                                            projectId={project.id}
+                                        />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'processes' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'processes' && (
-                                    <ProcessManager path={project.path} projectId={project.id} />
+                                    <ErrorBoundary>
+                                        <ProcessManager path={project.path} projectId={project.id} />
+                                    </ErrorBoundary>
                                 )}
                             </div>
 
                             <div className={activeTab === 'database' ? 'h-full' : 'hidden h-full'}>
                                 {activeTab === 'database' && (
-                                    <DatabasePanel projectId={project.id} />
+                                    <ErrorBoundary>
+                                        <DatabasePanel projectId={project.id} />
+                                    </ErrorBoundary>
                                 )}
                             </div>
                         </div>

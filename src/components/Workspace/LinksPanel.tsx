@@ -182,7 +182,7 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
 
             {isCreating && (
                 <div className="p-3 border border-border/50 rounded-lg bg-muted/50 space-y-3">
-                    <Tabs value={createType} onValueChange={(v: any) => setCreateType(v)} className="w-full">
+                    <Tabs value={createType} onValueChange={(v: string) => setCreateType(v as 'url' | 'command' | 'repository')} className="w-full">
                         <TabsList className="grid w-full grid-cols-3 h-7 p-0.5">
                             <TabsTrigger value="url" className="text-xs h-6">Link</TabsTrigger>
                             <TabsTrigger value="command" className="text-xs h-6">Command</TabsTrigger>

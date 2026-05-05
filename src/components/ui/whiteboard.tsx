@@ -20,7 +20,7 @@ export const WhiteboardEditor: React.FC<WhiteboardEditorProps> = ({ initialData,
     }, []);
 
     // Use 'any' for elements initially to allow flexibility if types mismatch
-    const [elements, setElements] = useState<any[]>([]);
+    const [elements, setElements] = useState<readonly Record<string, unknown>[]>([]);
     
     useEffect(() => {
         if (initialData) {
@@ -35,7 +35,7 @@ export const WhiteboardEditor: React.FC<WhiteboardEditorProps> = ({ initialData,
         }
     }, [initialData]);
 
-    const handleChange = (elements: readonly any[]) => {
+    const handleChange = (elements: readonly Record<string, unknown>[]) => {
         if (onChange) {
             const data = JSON.stringify(elements);
             onChange(data);

@@ -41,7 +41,7 @@ impl TerminalService {
         // Configure Command
         // Default to shell env var or /bin/zsh or cmd.exe
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        println!("DEBUG: Using shell: {}", shell);
+        tracing::debug!("Using shell: {}", shell);
         
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(["-l"]);
@@ -50,14 +50,13 @@ impl TerminalService {
         // Cwd
         // Expand ~ if present
         let expanded_path = crate::shared::utils::expand_path(&project.path);
-        println!("DEBUG: Spawning shell in path: {}", expanded_path);
-        
-        // Validation: Verify path exists, if not create it (auto-heal)
+        tracing::debug!("Spawning shell in path: {}", expanded_path);
+
         let path_obj = std::path::Path::new(&expanded_path);
         if !path_obj.exists() {
-             println!("DEBUG: Path missing, auto-creating: {}", expanded_path);
+             tracing::debug!("Path missing, auto-creating: {}", expanded_path);
              if let Err(e) = std::fs::create_dir_all(&path_obj) {
-                println!("ERROR: Failed to create path: {}", e);
+                tracing::error!("Failed to create path: {}", e);
                 return Err(anyhow::anyhow!("Failed to create project path: {}", e));
              }
         }
@@ -69,8 +68,7 @@ impl TerminalService {
             cmd.env(env.key, env.value);
         }
 
-        // Spawn
-        println!("DEBUG: Spawning command: {:?}", cmd);
+        tracing::debug!("Spawning command: {:?}", cmd);
         let _child = pair.slave.spawn_command(cmd)?;
 
         // If we have an initial command (like ssh), write it immediately
@@ -93,7 +91,6 @@ impl TerminalService {
             loop {
                 match reader.read(&mut buffer) {
                     Ok(n) if n > 0 => {
-                        // println!("DEBUG: Read {} bytes from PTY for session {}", n, session_id_clone);
                         let data = String::from_utf8_lossy(&buffer[..n]).to_string();
                         let _ = app_handle_clone.emit("terminal_data", Payload {
                             session_id: session_id_clone.clone(),
@@ -101,11 +98,11 @@ impl TerminalService {
                         });
                     }
                     Ok(_) => {
-                         println!("DEBUG: PTY Reader EOF for session {}", session_id_clone);
+                         tracing::debug!("PTY Reader EOF for session {}", session_id_clone);
                          break;
-                    } 
+                    }
                     Err(e) => {
-                         println!("DEBUG: PTY Reader Error for session {}: {}", session_id_clone, e);
+                         tracing::debug!("PTY Reader Error for session {}: {}", session_id_clone, e);
                          break;
                     }
                 }
@@ -119,27 +116,25 @@ impl TerminalService {
             project_id: project_id.clone(),
         };
 
-        self.sessions.lock().unwrap().insert(session_id.clone(), session);
+        self.sessions.lock().map_err(|_| anyhow::anyhow!("Failed to acquire session lock"))?.insert(session_id.clone(), session);
 
         Ok(session_id)
     }
 
     pub fn write_to_shell(&self, session_id: &str, data: &str) -> Result<()> {
-        println!("DEBUG: Writing {} bytes to session {}", data.len(), session_id);
-        let mut sessions = self.sessions.lock().unwrap();
+        tracing::debug!("Writing {} bytes to session {}", data.len(), session_id);
+        let mut sessions = self.sessions.lock().map_err(|_| anyhow::anyhow!("Failed to acquire session lock"))?;
         if let Some(session) = sessions.get_mut(session_id) {
-            // MasterPty doesn't implement Write directly in newer versions of portable-pty
-            // We need to clone a writer from it.
             let mut writer = session.pty_pair.master.take_writer()?;
             writer.write_all(data.as_bytes())?;
         } else {
-             println!("ERROR: Session {} not found", session_id);
+             tracing::error!("Session {} not found", session_id);
         }
         Ok(())
     }
 
     pub fn resize_shell(&self, session_id: &str, cols: u16, rows: u16) -> Result<()> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().map_err(|_| anyhow::anyhow!("Failed to acquire session lock"))?;
         if let Some(session) = sessions.get_mut(session_id) {
             session.pty_pair.master.resize(PtySize {
                 rows,

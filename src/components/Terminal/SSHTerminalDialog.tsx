@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { TerminalPanel } from '../Workspace/TerminalPanel';
 import { invokeCommand } from '../../lib/tauri';
 import { Terminal as TerminalIcon } from 'lucide-react';
+import type { Project } from '../../types';
 
 interface SSHTerminalDialogProps {
     host: string;
@@ -54,7 +55,7 @@ export const SSHTerminalDialog: React.FC<SSHTerminalDialogProps> = ({ host, onCl
     const [error, setError] = useState<string | null>(null);
 
     React.useEffect(() => {
-        invokeCommand<any[]>('list_projects').then(projects => {
+        invokeCommand<Project[]>('list_projects').then(projects => {
             if (projects.length > 0) {
                 setProjectId(projects[0].id);
             } else {

@@ -153,14 +153,10 @@ impl ProjectService {
 
         // 1. package.json (Node.js)
         let package_json_path = path_obj.join("package.json");
-        println!("Checking scripts at: {:?}", package_json_path);
-        
         if package_json_path.exists() {
-            println!("Found package.json");
             if let Ok(content) = fs::read_to_string(&package_json_path) {
                 if let Ok(json) = serde_json::from_str::<Value>(&content) {
                     if let Some(scripts_obj) = json["scripts"].as_object() {
-                        println!("Found scripts object with {} entries", scripts_obj.len());
                         for (name, cmd) in scripts_obj {
                             if let Some(cmd_str) = cmd.as_str() {
                                 scripts.push(ProjectScript {
@@ -170,17 +166,9 @@ impl ProjectService {
                                 });
                             }
                         }
-                    } else {
-                        println!("No 'scripts' key in package.json");
                     }
-                } else {
-                    println!("Failed to parse package.json as JSON");
                 }
-            } else {
-                println!("Failed to read package.json content");
             }
-        } else {
-            println!("package.json does not exist at path");
         }
         
         // 2. Makefile (Generic)
@@ -225,5 +213,28 @@ impl ProjectService {
         } else {
              Err(anyhow::anyhow!("Project not found"))
         }
+    }
+
+    // Playbooks
+    pub async fn create_playbook(&self, project_id: String, name: String, description: Option<String>) -> Result<super::models::ProjectPlaybook> {
+        self.repo.create_playbook(project_id, name, description).await
+    }
+
+    pub async fn get_project_playbooks(&self, project_id: &str) -> Result<Vec<super::models::ProjectPlaybook>> {
+        self.repo.get_project_playbooks(project_id).await
+    }
+
+    pub async fn delete_playbook(&self, id: &str) -> Result<()> {
+        self.repo.delete_playbook(id).await
+    }
+
+    pub async fn create_playbook_step(
+        &self, playbook_id: String, name: String, r#type: String, command: Option<String>, depends_on: Option<String>, expected_output: Option<String>
+    ) -> Result<super::models::PlaybookStep> {
+        self.repo.create_playbook_step(playbook_id, name, r#type, command, depends_on, expected_output).await
+    }
+
+    pub async fn get_playbook_steps(&self, playbook_id: &str) -> Result<Vec<super::models::PlaybookStep>> {
+        self.repo.get_playbook_steps(playbook_id).await
     }
 }

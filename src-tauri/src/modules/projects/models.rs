@@ -77,7 +77,33 @@ pub struct ProjectLink {
     pub icon: Option<String>,
     #[sqlx(default)]
     pub kind: String, // 'url' or 'command'
-    pub working_directory: Option<String>,
     #[sqlx(default)]
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProjectPlaybook {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    #[sqlx(default)]
+    pub created_at: String,
+    #[sqlx(default)]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PlaybookStep {
+    pub id: String,
+    pub playbook_id: String,
+    pub name: String,
+    pub r#type: String, // 'process', 'delay', 'database_query'
+    pub command: Option<String>,
+    pub depends_on: Option<String>,
+    pub expected_output: Option<String>,
+    #[sqlx(default)]
+    pub created_at: String,
+    #[sqlx(default)]
+    pub updated_at: String,
 }

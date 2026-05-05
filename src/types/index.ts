@@ -74,3 +74,66 @@ export interface ProjectConnection {
     created_at: string;
     updated_at: string;
 }
+
+export interface Process {
+    id: string;
+    command: string;
+    cwd: string;
+    running: boolean;
+    pid: number;
+}
+
+export interface ProjectPlaybook {
+    id: string;
+    project_id: string;
+    name: string;
+    description?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PlaybookStep {
+    id: string;
+    playbook_id: string;
+    name: string;
+    type: string;
+    command?: string;
+    depends_on?: string;
+    expected_output?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ProjectScript {
+    name: string;
+    command: string;
+    source: string;
+}
+
+export interface ProjectLink {
+    id: string;
+    project_id: string;
+    title: string;
+    url: string;
+    icon?: string;
+    kind: 'url' | 'command' | 'repository';
+    working_directory?: string;
+    created_at: string;
+}
+
+export interface QueryResult {
+    columns: string[];
+    rows: string[][];
+    affected_rows: number;
+}
+
+export interface TableInfo {
+    name: string;
+    schema?: string;
+}
+
+export interface ProjectContext {
+    name: string;
+    path: string;
+    scripts?: ProjectScript[];
+}

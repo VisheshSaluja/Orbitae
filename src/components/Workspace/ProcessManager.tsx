@@ -6,14 +6,7 @@ import { Square, Plus, Terminal as TerminalIcon, LayoutList, Trash2 } from 'luci
 import { ProjectTerminal } from './ProjectTerminal';
 import { invokeCommand } from '../../lib/tauri';
 import { toast } from 'sonner';
-
-interface Process {
-    id: string;
-    command: string;
-    cwd: string;
-    running: boolean;
-    pid: number;
-}
+import type { Process, Snippet } from '../../types';
 
 interface ProcessManagerProps {
     projectId: string; // Added projectId
@@ -22,7 +15,7 @@ interface ProcessManagerProps {
 
 export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path }) => {
     const [processes, setProcesses] = useState<Process[]>([]);
-    const [snippets, setSnippets] = useState<any[]>([]); // Using 'any' briefly to avoid import churn, should be Snippet
+    const [snippets, setSnippets] = useState<Snippet[]>([]);
     const [newCommand, setNewCommand] = useState('');
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -41,7 +34,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
 
     const fetchSnippets = async () => {
         try {
-            const data = await invokeCommand<any[]>('get_project_snippets', { projectId });
+            const data = await invokeCommand<Snippet[]>('get_project_snippets', { projectId });
             setSnippets(data);
         } catch (e) {
             console.error("Failed to fetch saved commands:", e);
@@ -182,12 +175,11 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
                                 <div className="mt-4 mb-2 px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                                     Saved Commands
                                 </div>
-                                {snippets.map((snip: any) => (
+                                {snippets.map((snip: Snippet) => (
                                     <div
                                         key={snip.id}
                                         onClick={(e) => {
-                                            // Run command
-                                            handleStart(e as any, snip.command);
+                                            handleStart(e as unknown as React.FormEvent, snip.command);
                                         }}
                                         className="group/item flex items-center justify-between p-2 rounded-md hover:bg-muted cursor-pointer text-sm font-mono text-muted-foreground hover:text-foreground transition-colors"
                                     >

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Window, Emitter};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
-use std::io::{Read};
+use std::io::{Read, Write};
 use std::thread;
 use anyhow::{Result, anyhow};
 use uuid::Uuid;
@@ -38,8 +38,10 @@ impl ProcessService {
             pixel_height: 0,
         })?;
 
+        let writer = pair.master.take_writer().map_err(|e| anyhow!("Failed to get process writer: {}", e))?;
+
         let child = pair.slave.spawn_command(cmd)?;
-        
+
         let pid = child.process_id().unwrap_or(0);
 
         let id = Uuid::new_v4().to_string();
@@ -85,9 +87,10 @@ impl ProcessService {
             history,
             command: command.clone(),
             cwd: cwd.clone(),
+            writer: Arc::new(Mutex::new(writer)),
         };
 
-        self.state.lock().unwrap().insert(id.clone(), session);
+        self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?.insert(id.clone(), session);
 
         Ok(Process {
             id,
@@ -98,16 +101,18 @@ impl ProcessService {
         })
     }
 
-    pub fn write(&self, _id: &str, _data: &str) -> Result<()> {
-        // FIXME: portable-pty trait bounds for Write are fighting with Box<dyn MasterPty + Send>
-        // For now, we stub this to allow compilation of the read-loop and frontend.
-        // We will fix interaction later (maybe by downcasting or using raw FDs).
-        Err(anyhow!("Writing to process is currently disabled due to backend trait issues"))
+    pub fn write(&self, id: &str, data: &str) -> Result<()> {
+        let state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
+        let session = state.get(id).ok_or_else(|| anyhow!("Process not found: {}", id))?;
+        let mut writer = session.writer.lock().map_err(|_| anyhow!("Failed to acquire writer lock"))?;
+        writer.write_all(data.as_bytes())?;
+        writer.flush()?;
+        Ok(())
     }
 
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
         if let Some(session) = state.get_mut(id) {
             session.pty_pair.master.resize(PtySize {
                 rows,
@@ -122,7 +127,7 @@ impl ProcessService {
     }
 
     pub fn kill(&self, id: &str) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
         if let Some(mut session) = state.remove(id) {
             session.process.kill()?;
             Ok(())
@@ -132,9 +137,9 @@ impl ProcessService {
     }
 
     pub fn get_history(&self, id: &str) -> Result<String> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
         if let Some(session) = state.get(id) {
-             let history = session.history.lock().unwrap();
+             let history = session.history.lock().map_err(|_| anyhow!("Failed to acquire history lock"))?;
              Ok(history.clone())
         } else {
             Err(anyhow!("Process not found"))
@@ -142,7 +147,7 @@ impl ProcessService {
     }
 
     pub fn list_processes(&self) -> Result<Vec<Process>> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
         let mut processes = Vec::new();
         for (id, session) in state.iter() {
              // Check if process is still running?

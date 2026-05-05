@@ -166,13 +166,11 @@ pub fn get_git_history(path: &str, limit: usize) -> Result<Vec<Commit>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // println!("Git Log Raw Output Length: {}", stdout.len());
-    
     let commits: Vec<Commit> = stdout.lines().filter_map(|line| {
         let parts: Vec<&str> = line.split("|%|").collect();
-        if parts.len() < 5 { 
-            println!("Skipping line, parts len: {}", parts.len());
-            return None; 
+        if parts.len() < 5 {
+            tracing::debug!("Skipping line, parts len: {}", parts.len());
+            return None;
         }
         
         Some(Commit {
@@ -185,7 +183,7 @@ pub fn get_git_history(path: &str, limit: usize) -> Result<Vec<Commit>> {
         })
     }).collect();
     
-    println!("Parsed Commits Count: {}", commits.len());
+    tracing::debug!("Parsed Commits Count: {}", commits.len());
 
     Ok(commits)
 }

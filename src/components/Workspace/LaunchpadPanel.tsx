@@ -227,7 +227,7 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
                              <CardTitle className="text-base">Add Launch Item</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                             <Tabs value={createType} onValueChange={(v: any) => setCreateType(v)} className="w-full">
+                             <Tabs value={createType} onValueChange={(v: string) => setCreateType(v as 'url' | 'command' | 'repository')} className="w-full">
                                 <TabsList className="grid w-full grid-cols-3">
                                     <TabsTrigger value="url">Link</TabsTrigger>
                                     <TabsTrigger value="command">Command</TabsTrigger>

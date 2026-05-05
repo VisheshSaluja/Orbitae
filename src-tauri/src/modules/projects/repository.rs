@@ -1,4 +1,4 @@
-use super::models::{Project, ProjectEnv, Snippet, ProjectKey, ProjectNote, ProjectLink};
+use super::models::{Project, ProjectEnv, Snippet, ProjectKey, ProjectNote, ProjectLink, ProjectPlaybook, PlaybookStep};
 use anyhow::Result;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -147,6 +147,7 @@ impl ProjectRepository {
         sqlx::query("DELETE FROM project_snippets WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM project_notes WHERE project_id = ?").bind(id).execute(&mut *tx).await?; 
         sqlx::query("DELETE FROM project_links WHERE project_id = ?").bind(id).execute(&mut *tx).await?; 
+        sqlx::query("DELETE FROM project_playbooks WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM projects WHERE id = ?").bind(id).execute(&mut *tx).await?;
 
         tx.commit().await?;
@@ -264,7 +265,6 @@ impl ProjectRepository {
             url,
             icon,
             kind,
-            working_directory,
             created_at: String::new(),
         })
     }
@@ -283,6 +283,81 @@ impl ProjectRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    // Playbooks
+    pub async fn create_playbook(&self, project_id: String, name: String, description: Option<String>) -> Result<ProjectPlaybook> {
+        let id = Uuid::new_v4().to_string();
+
+        sqlx::query("INSERT INTO project_playbooks (id, project_id, name, description) VALUES (?, ?, ?, ?)")
+            .bind(&id)
+            .bind(&project_id)
+            .bind(&name)
+            .bind(&description)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(ProjectPlaybook {
+            id,
+            project_id,
+            name,
+            description,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+    }
+
+    pub async fn get_project_playbooks(&self, project_id: &str) -> Result<Vec<ProjectPlaybook>> {
+        let playbooks = sqlx::query_as::<_, ProjectPlaybook>("SELECT id, project_id, name, description, created_at, updated_at FROM project_playbooks WHERE project_id = ? ORDER BY created_at DESC")
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(playbooks)
+    }
+
+    pub async fn delete_playbook(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM project_playbooks WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn create_playbook_step(
+        &self, playbook_id: String, name: String, r#type: String, command: Option<String>, depends_on: Option<String>, expected_output: Option<String>
+    ) -> Result<PlaybookStep> {
+        let id = Uuid::new_v4().to_string();
+
+        sqlx::query("INSERT INTO playbook_steps (id, playbook_id, name, type, command, depends_on, expected_output) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(&id)
+            .bind(&playbook_id)
+            .bind(&name)
+            .bind(&r#type)
+            .bind(&command)
+            .bind(&depends_on)
+            .bind(&expected_output)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(PlaybookStep {
+            id,
+            playbook_id,
+            name,
+            r#type,
+            command,
+            depends_on,
+            expected_output,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+    }
+
+    pub async fn get_playbook_steps(&self, playbook_id: &str) -> Result<Vec<PlaybookStep>> {
+        let steps = sqlx::query_as::<_, PlaybookStep>("SELECT id, playbook_id, name, type, command, depends_on, expected_output, created_at, updated_at FROM playbook_steps WHERE playbook_id = ? ORDER BY created_at ASC")
+            .bind(playbook_id)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(steps)
     }
 }
 

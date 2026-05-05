@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::io::Write;
 use portable_pty::PtyPair;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub struct ProcessSession {
     pub history: Arc<Mutex<String>>,
     pub command: String,
     pub cwd: String,
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
 
 // SAFETY: portable_pty types wrap OS handles (FDs on Unix, Handles on Windows) which are generally Send/Sync.

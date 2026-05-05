@@ -19,21 +19,19 @@ pub async fn init_pool<P: AsRef<Path>>(app_data_dir: P) -> Result<SqlitePool> {
             let old_db_path = old_app_dir.join("switchboard.db");
             
             if old_db_path.exists() {
-                println!("Migrating database from {:?} to {:?}", old_db_path, db_path);
+                tracing::info!("Migrating database from {:?} to {:?}", old_db_path, db_path);
                 if let Err(e) = fs::copy(&old_db_path, &db_path) {
-                    eprintln!("Failed to copy old database: {}", e);
+                    tracing::error!("Failed to copy old database: {}", e);
                 } else {
-                    println!("Database migration successful!");
+                    tracing::info!("Database migration successful!");
                 }
             } else {
-                 println!("No old database found at {:?}", old_db_path);
+                 tracing::debug!("No old database found at {:?}", old_db_path);
             }
         }
     }
 
-    // Create connection options
-    // Log intent to create DB
-    println!("Database path: {:?}", db_path);
+    tracing::info!("Database path: {:?}", db_path);
 
     let options = SqliteConnectOptions::new()
         .filename(&db_path)

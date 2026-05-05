@@ -10,11 +10,10 @@ pub struct SshService {
 }
 
 impl SshService {
-    pub fn new() -> Self {
-        // Default to ~/.ssh/config
-        let home = dirs::home_dir().expect("Could not find home directory");
+    pub fn new() -> anyhow::Result<Self> {
+        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
         let config_path = home.join(".ssh").join("config");
-        Self { config_path }
+        Ok(Self { config_path })
     }
 
     pub fn with_path(path: PathBuf) -> Self {

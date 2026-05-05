@@ -161,7 +161,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({ path }) => {
 };
 
 class ErrorBoundary extends React.Component<{ onError: () => void, children: React.ReactNode }> {
-    componentDidCatch(error: any) {
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
         console.error("GitGraph Error:", error);
         this.props.onError();
     }

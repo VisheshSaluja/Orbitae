@@ -14,6 +14,12 @@ pub async fn create_project(
     path: String,
     ssh_key_path: Option<String>,
 ) -> Result<Project, String> {
+    if name.trim().is_empty() {
+        return Err("Project name cannot be empty".to_string());
+    }
+    if path.trim().is_empty() {
+        return Err("Project path cannot be empty".to_string());
+    }
     let service = ProjectService::new(pool.inner().clone());
     service.create_project(name, path, ssh_key_path)
         .await
@@ -176,15 +182,10 @@ pub async fn reveal_secret(
     pool: State<'_, SqlitePool>,
     key_reference: String,
 ) -> Result<String, String> {
-    println!("DEBUG: Revealing secret for key reference: {}", key_reference);
-    
     let service = ProjectService::new(pool.inner().clone());
     service.reveal_secret(&key_reference)
         .await
-        .map_err(|e| {
-            println!("DEBUG: Reveal failed: {}", e);
-            e.to_string()
-        })
+        .map_err(|e| e.to_string())
 }
 
 // Notes
@@ -397,4 +398,67 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// Playbook Commands
+#[command]
+pub async fn create_playbook(
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+    name: String,
+    description: Option<String>
+) -> Result<crate::modules::projects::models::ProjectPlaybook, String> {
+    let service = ProjectService::new(pool.inner().clone());
+    service.create_playbook(project_id, name, description)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn get_project_playbooks(
+    pool: State<'_, SqlitePool>,
+    project_id: String
+) -> Result<Vec<crate::modules::projects::models::ProjectPlaybook>, String> {
+    let service = ProjectService::new(pool.inner().clone());
+    service.get_project_playbooks(&project_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn delete_playbook(
+    pool: State<'_, SqlitePool>,
+    id: String
+) -> Result<(), String> {
+    let service = ProjectService::new(pool.inner().clone());
+    service.delete_playbook(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn create_playbook_step(
+    pool: State<'_, SqlitePool>,
+    playbook_id: String,
+    name: String,
+    r#type: String,
+    command: Option<String>,
+    depends_on: Option<String>,
+    expected_output: Option<String>
+) -> Result<crate::modules::projects::models::PlaybookStep, String> {
+    let service = ProjectService::new(pool.inner().clone());
+    service.create_playbook_step(playbook_id, name, r#type, command, depends_on, expected_output)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn get_playbook_steps(
+    pool: State<'_, SqlitePool>,
+    playbook_id: String
+) -> Result<Vec<crate::modules::projects::models::PlaybookStep>, String> {
+    let service = ProjectService::new(pool.inner().clone());
+    service.get_playbook_steps(&playbook_id)
+        .await
+        .map_err(|e| e.to_string())
 }

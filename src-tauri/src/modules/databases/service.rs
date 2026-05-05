@@ -112,6 +112,7 @@ impl DatabaseService {
     }
 
     pub async fn execute_query(&self, kind: &str, details: &str, query: &str, password: Option<&str>) -> Result<QueryResult> {
+         validate_query(query)?;
          let config: serde_json::Value = serde_json::from_str(details)?;
          
          match kind {
@@ -305,5 +306,21 @@ impl DatabaseService {
             _ => Err(anyhow::anyhow!("Get tables for {} not implemented yet", kind)),
         }
     }
-    }
+}
 
+fn validate_query(query: &str) -> Result<()> {
+    let trimmed = query.trim().to_uppercase();
+    let dangerous_prefixes = [
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
+        "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
+    ];
+    for prefix in &dangerous_prefixes {
+        if trimmed.starts_with(prefix) {
+            return Err(anyhow::anyhow!(
+                "Only SELECT queries are allowed. '{}' statements are blocked for safety.",
+                prefix
+            ));
+        }
+    }
+    Ok(())
+}

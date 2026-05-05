@@ -17,7 +17,7 @@ interface DatabasePanelProps {
 
 interface QueryResult {
     columns: string[];
-    rows: any[][];
+    rows: string[][];
     affected_rows: number;
 }
 
@@ -199,9 +199,10 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
             });
             setQueryResult(res);
             toast.success("Query executed");
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
             console.error(e);
-            toast.error("Query failed: " + e);
+            toast.error("Query failed: " + message);
         } finally {
             setIsExecuting(false);
         }
@@ -411,7 +412,7 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
                          <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Type</Label>
-                                <Select value={newKind} onValueChange={(v: any) => setNewKind(v)}>
+                                <Select value={newKind} onValueChange={(v: string) => setNewKind(v as 'postgres' | 'mysql' | 'sqlite')}>
                                     <SelectTrigger>
                                         <SelectValue />
                                     </SelectTrigger>
@@ -488,7 +489,7 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
     );
 };
 
-function Activity(props: any) {
+function Activity(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}

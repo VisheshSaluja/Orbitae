@@ -344,7 +344,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
                                              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Title</label>
                                              {/* Only show toggle for NEW notes */}
                                              {!editingNote && (
-                                                <Tabs value={kind} onValueChange={(v: any) => setKind(v)} className="h-6">
+                                                <Tabs value={kind} onValueChange={(v: string) => setKind(v as 'text' | 'canvas')} className="h-6">
                                                     <TabsList className="h-6 p-0 bg-muted/50">
                                                         <TabsTrigger value="text" className="text-xs px-2 h-5">Text</TabsTrigger>
                                                         <TabsTrigger value="canvas" className="text-xs px-2 h-5">Canvas</TabsTrigger>

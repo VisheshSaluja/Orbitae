@@ -5,19 +5,23 @@ pub mod shared;
 use tauri::Manager;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  let filter = if cfg!(debug_assertions) {
+      EnvFilter::new("app_lib=debug,info")
+  } else {
+      EnvFilter::new("app_lib=info,warn")
+  };
+
+  tracing_subscriber::fmt()
+      .with_env_filter(filter)
+      .with_target(true)
+      .init();
+
   tauri::Builder::default()
     .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
-      
       app.handle().plugin(tauri_plugin_shell::init())?;
       app.handle().plugin(tauri_plugin_dialog::init())?;
       app.handle().plugin(tauri_plugin_fs::init())?;
@@ -88,6 +92,11 @@ pub fn run() {
         modules::terminal::commands::write_to_shell,
         modules::terminal::commands::resize_shell,
         modules::terminal::commands::open_external_terminal,
+        modules::projects::commands::create_playbook,
+        modules::projects::commands::get_project_playbooks,
+        modules::projects::commands::delete_playbook,
+        modules::projects::commands::create_playbook_step,
+        modules::projects::commands::get_playbook_steps,
         // Process Manager
         modules::processes::commands::start_process,
         modules::processes::commands::write_to_process,
