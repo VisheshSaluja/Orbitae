@@ -40,6 +40,12 @@ tauri-plugin-dialog = "2.4.2"
 tauri-plugin-fs = "2"
 base64 = "0.22.1"
 open = "5.3.3"
+rmcp = { version = "1", features = ["server", "transport-io"] }
+schemars = "0.8"
+
+[[bin]]
+name = "orbitae-mcp"
+path = "src/mcp_server.rs"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 localauthentication-rs = "0.1.0"

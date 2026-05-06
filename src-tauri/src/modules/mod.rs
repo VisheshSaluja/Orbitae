@@ -6,3 +6,5 @@ pub mod terminal;
 pub mod git;
 pub mod processes;
 pub mod databases;
+pub mod knowledge;
+pub mod ai;

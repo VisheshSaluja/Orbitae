@@ -21,24 +21,25 @@
 - [ ] Implement custom error types per Rust module (replace String errors)
 
 ### P1.2 — AI Agent Hub (Priority #1)
-- [ ] Multi-provider LLM support: OpenAI, Anthropic, Groq, local Ollama
-- [ ] API key management via Vault (per-provider, securely stored)
-- [ ] Provider configuration UI (select model, set temperature, token limits)
-- [ ] Project context injection: file tree, running processes, DB connections, git status, recent notes
-- [ ] Streaming responses with real-time tool execution visualization
-- [ ] Tool definitions: startProcess, stopProcess, runQuery, readNote, getGitStatus, getSecrets (with approval)
-- [ ] Conversation history persisted per project in SQLite
-- [ ] Agent templates: "Boot dev environment", "Debug this error", "Explain this codebase"
-- [ ] **Knowledge Graph Foundation:** SQLite tables (`knowledge_nodes`, `knowledge_edges`, `knowledge_log`)
-- [ ] **Knowledge Graph CRUD:** Rust repository + service for node/edge creation, update, deletion
-- [ ] **Knowledge Graph UI:** Node list panel, manual node creation/editing, basic Cytoscape.js visualization
-- [ ] **Knowledge Graph AI Tools:** `search_knowledge`, `create_knowledge_node`, `update_knowledge_node`, `link_nodes`
-- [ ] **Context Builder v2:** Graph-aware context injection — query relevant nodes instead of dumping raw data
-- [ ] **Auto-ingest (basic):** On project creation, auto-ingest README.md and docs/ into graph nodes
+- [x] Multi-provider LLM support: OpenAI, Anthropic, Groq, local Ollama
+- [x] API key management via Vault (per-provider, securely stored)
+- [x] Provider configuration UI (select model, set temperature, token limits)
+- [x] Project context injection: file tree, running processes, DB connections, git status, recent notes
+- [x] Streaming responses with real-time tool execution visualization
+- [x] Tool definitions: startProcess, stopProcess, runQuery, searchKnowledge, getGitStatus, createKnowledgeNode, linkNodes
+- [x] Conversation history persisted per project in SQLite
+- [x] Agent templates: "Boot dev environment", "Debug this error", "Explain this codebase", + 3 more
+- [x] **Knowledge Graph Foundation:** SQLite tables (`knowledge_nodes`, `knowledge_edges`, `knowledge_log`)
+- [x] **Knowledge Graph CRUD:** Rust repository + service for node/edge creation, update, deletion
+- [x] **Knowledge Graph UI:** Node list panel with kind badges, source labels, delete actions
+- [x] **Knowledge Graph AI Tools:** `search_knowledge`, `create_knowledge_node`, `update_knowledge_node`, `link_nodes`
+- [x] **Context Builder v2:** Graph-aware context injection — query relevant nodes instead of dumping raw data
+- [x] **Auto-ingest (basic):** Auto-ingest README.md, CONTRIBUTING.md, ARCHITECTURE.md, docs/ into graph nodes
+- [ ] **Knowledge Graph UI:** Cytoscape.js graph visualization (deferred — node list implemented first)
 
 ### P1.3 — MCP Server (Priority #2)
-- [ ] Implement MCP server protocol in Rust
-- [ ] Expose tools: `get_project_context`, `run_command`, `query_database`, `get_secrets`, `read_notes`, `get_process_status`, `manage_tasks`
+- [x] Implement MCP server protocol in Rust (rmcp v1.6, JSON-RPC over stdio)
+- [x] Expose tools: `list_projects`, `get_project_context`, `run_command`, `query_database`, `get_secrets`, `read_notes`, `search_knowledge`
 - [ ] Authentication for MCP connections (local socket or token-based)
 - [ ] Auto-start MCP server when Orbitae launches
 - [ ] Documentation: "How to connect Claude Code / Cursor to Orbitae"

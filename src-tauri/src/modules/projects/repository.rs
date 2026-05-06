@@ -148,6 +148,12 @@ impl ProjectRepository {
         sqlx::query("DELETE FROM project_notes WHERE project_id = ?").bind(id).execute(&mut *tx).await?; 
         sqlx::query("DELETE FROM project_links WHERE project_id = ?").bind(id).execute(&mut *tx).await?; 
         sqlx::query("DELETE FROM project_playbooks WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM knowledge_log WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM knowledge_edges WHERE from_node IN (SELECT id FROM knowledge_nodes WHERE project_id = ?)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM knowledge_nodes WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE project_id = ?)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM conversations WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM ai_provider_configs WHERE project_id = ?").bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM projects WHERE id = ?").bind(id).execute(&mut *tx).await?;
 
         tx.commit().await?;

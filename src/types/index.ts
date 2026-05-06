@@ -136,4 +136,91 @@ export interface ProjectContext {
     name: string;
     path: string;
     scripts?: ProjectScript[];
+    knowledgeNodes?: KnowledgeNode[];
+}
+
+// Knowledge Graph
+export interface KnowledgeNode {
+    id: string;
+    project_id: string;
+    title: string;
+    content: string;
+    kind: string;
+    source: string;
+    status: string;
+    tags: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface KnowledgeEdge {
+    id: string;
+    from_node: string;
+    to_node: string;
+    relation: string;
+    created_at: string;
+}
+
+export interface KnowledgeLogEntry {
+    id: string;
+    project_id: string;
+    action: string;
+    summary: string;
+    affected_nodes: string;
+    created_at: string;
+}
+
+export interface NodeWithEdges {
+    node: KnowledgeNode;
+    edges: KnowledgeEdge[];
+}
+
+// AI Agent Hub
+export interface AiProviderInfo {
+    id: string;
+    name: string;
+    models: AiModelInfo[];
+    requires_api_key: boolean;
+    default_base_url?: string;
+}
+
+export interface AiModelInfo {
+    id: string;
+    name: string;
+    context_window: number;
+    supports_tools: boolean;
+}
+
+export interface AiProviderConfig {
+    id: string;
+    project_id: string;
+    provider: string;
+    model: string;
+    key_reference?: string;
+    base_url?: string;
+    temperature: number;
+    max_tokens: number;
+    is_default: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface Conversation {
+    id: string;
+    project_id: string;
+    title: string;
+    provider: string;
+    model: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ConversationMessage {
+    id: string;
+    conversation_id: string;
+    role: string;
+    content: string;
+    tool_calls?: string;
+    tool_results?: string;
+    created_at: string;
 }
