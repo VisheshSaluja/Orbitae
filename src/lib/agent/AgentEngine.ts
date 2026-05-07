@@ -8,6 +8,7 @@ import type { ProjectContext, AiProviderConfig, KnowledgeNode } from '../../type
 interface ProviderInstance {
     provider: ReturnType<typeof createOpenAI>;
     model: string;
+    supportsTools: boolean;
 }
 
 export interface AgentMessage {
@@ -29,13 +30,17 @@ export class AgentEngine {
         const baseURL = config.base_url || baseURLMap[config.provider] || baseURLMap.openai;
         const key = apiKey || 'ollama';
 
+        const noToolModels = ['llama3.2:latest', 'llama3:latest'];
+        const supportsTools = !noToolModels.includes(config.model);
+
         this.providerInstance = {
             provider: createOpenAI({
                 apiKey: key,
                 baseURL,
-                compatibility: config.provider === 'anthropic' ? 'compatible' : 'strict',
+                compatibility: (config.provider === 'anthropic' || config.provider === 'ollama') ? 'compatible' : 'strict',
             }),
             model: config.model,
+            supportsTools,
         };
 
         logger.info(`Agent configured: ${config.provider}/${config.model}`);
@@ -55,10 +60,17 @@ export class AgentEngine {
 You have access to the project's infrastructure: terminals, processes, databases, secrets, and knowledge graph.
 Use the available tools to help the developer manage their project efficiently.
 
+IMPORTANT: When calling tools, use these exact values:
+- projectId: "${projectContext.projectId}"
+- path: "${projectContext.path}"
+
 When you discover important information (architecture decisions, conventions, debugging insights), save it to the knowledge graph using the createKnowledgeNode tool so it compounds over time.
+
+After using tools, ALWAYS respond with a natural language summary of what you found or did. Never leave the user without a text response.
 
 Project Context:
 Name: ${projectContext.name}
+Project ID: ${projectContext.projectId}
 Path: ${projectContext.path}
 Known Scripts: ${JSON.stringify(projectContext.scripts || [])}${knowledgeSection}
 
@@ -98,12 +110,13 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
         ];
 
         try {
+            const useTools = this.providerInstance.supportsTools;
+
             const result = await generateText({
                 model: this.providerInstance.provider.chat(this.providerInstance.model),
                 system: systemPrompt,
                 messages,
-                tools: agentTools as Record<string, unknown>,
-                maxSteps: 10,
+                ...(useTools ? { tools: agentTools as Record<string, unknown>, maxSteps: 10 } : {}),
                 onStepFinish: ({ toolCalls, toolResults }) => {
                     if (toolCalls && toolCalls.length > 0) {
                         for (const call of toolCalls) {
@@ -146,12 +159,15 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
         ];
 
         try {
+            const collectedToolResults: Array<{ toolName: string; result: unknown }> = [];
+
+            const useTools = this.providerInstance.supportsTools;
+
             const result = streamText({
                 model: this.providerInstance.provider.chat(this.providerInstance.model),
                 system: systemPrompt,
                 messages,
-                tools: agentTools as Record<string, unknown>,
-                maxSteps: 10,
+                ...(useTools ? { tools: agentTools as Record<string, unknown>, maxSteps: 10 } : {}),
                 onStepFinish: ({ toolCalls, toolResults }) => {
                     if (toolCalls && toolCalls.length > 0) {
                         for (const call of toolCalls) {
@@ -161,6 +177,7 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
                     if (toolResults && toolResults.length > 0) {
                         for (const res of toolResults) {
                             onToolResult(res.toolName);
+                            collectedToolResults.push({ toolName: res.toolName, result: res.result });
                         }
                     }
                 },
@@ -170,6 +187,19 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
             for await (const chunk of result.textStream) {
                 fullText += chunk;
                 onTextChunk(chunk);
+            }
+
+            // If model called tools but produced no text, synthesize a response
+            if (!fullText.trim() && collectedToolResults.length > 0) {
+                const summary = collectedToolResults.map(tr => {
+                    const resultStr = typeof tr.result === 'string'
+                        ? tr.result
+                        : JSON.stringify(tr.result, null, 2);
+                    const truncated = resultStr.length > 500 ? resultStr.substring(0, 500) + '...' : resultStr;
+                    return `**${tr.toolName}**:\n\`\`\`\n${truncated}\n\`\`\``;
+                }).join('\n\n');
+                fullText = `Here's what I found:\n\n${summary}`;
+                onTextChunk(fullText);
             }
 
             return fullText;

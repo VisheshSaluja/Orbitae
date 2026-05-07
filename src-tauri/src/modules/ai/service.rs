@@ -58,9 +58,10 @@ impl AiService {
                 requires_api_key: false,
                 default_base_url: Some("http://127.0.0.1:11434/v1".to_string()),
                 models: vec![
-                    AiModelInfo { id: "llama3.2".to_string(), name: "Llama 3.2".to_string(), context_window: 131072, supports_tools: true },
-                    AiModelInfo { id: "qwen2.5-coder".to_string(), name: "Qwen 2.5 Coder".to_string(), context_window: 32768, supports_tools: true },
-                    AiModelInfo { id: "deepseek-coder-v2".to_string(), name: "DeepSeek Coder V2".to_string(), context_window: 131072, supports_tools: true },
+                    AiModelInfo { id: "llama3.2:latest".to_string(), name: "Llama 3.2 (3B)".to_string(), context_window: 131072, supports_tools: false },
+                    AiModelInfo { id: "qwen2.5-coder:7b".to_string(), name: "Qwen 2.5 Coder 7B".to_string(), context_window: 32768, supports_tools: true },
+                    AiModelInfo { id: "qwen2.5:7b".to_string(), name: "Qwen 2.5 7B".to_string(), context_window: 32768, supports_tools: true },
+                    AiModelInfo { id: "deepseek-coder-v2:latest".to_string(), name: "DeepSeek Coder V2".to_string(), context_window: 131072, supports_tools: true },
                 ],
             },
         ]

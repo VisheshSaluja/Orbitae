@@ -40,9 +40,10 @@
 ### P1.3 — MCP Server (Priority #2)
 - [x] Implement MCP server protocol in Rust (rmcp v1.6, JSON-RPC over stdio)
 - [x] Expose tools: `list_projects`, `get_project_context`, `run_command`, `query_database`, `get_secrets`, `read_notes`, `search_knowledge`
-- [ ] Authentication for MCP connections (local socket or token-based)
-- [ ] Auto-start MCP server when Orbitae launches
-- [ ] Documentation: "How to connect Claude Code / Cursor to Orbitae"
+- [x] Authentication for MCP connections (token-based, keychain-stored, env var handshake)
+- [x] Auto-start MCP server when Orbitae launches (token provisioned on startup, config generator command)
+- [x] Documentation: "How to connect Claude Code / Cursor to Orbitae" (`docs/MCP.md`)
+- [x] MCP client config generation command (`get_mcp_client_config`)
 - [ ] Test with Claude Code, Cursor, and at least one other MCP client
 
 ### P1.4 — Playbook Engine v2 (Priority #3)
@@ -72,6 +73,13 @@
 - [ ] Activity feed panel in React (real-time, reverse-chronological)
 - [ ] Filter by event type
 - [ ] Quick actions from activity items (re-run command, open note, etc.)
+
+### P1.UI — Workspace UI Revamp
+- [x] Replace 10-tab horizontal bar with grouped sidebar navigation
+- [x] Navigation groups: Core, Infrastructure, Development, Content
+- [x] Collapsible sidebar with icon-only mode
+- [x] Active tab highlight with primary color accent border
+- [ ] Keyboard shortcuts for sidebar navigation (Cmd+1–9)
 
 ### P1.7 — Polish & Distribution
 - [ ] Apple Developer Certificate + code signing

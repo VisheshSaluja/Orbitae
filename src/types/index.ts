@@ -133,6 +133,7 @@ export interface TableInfo {
 }
 
 export interface ProjectContext {
+    projectId: string;
     name: string;
     path: string;
     scripts?: ProjectScript[];

@@ -184,6 +184,7 @@ impl KnowledgeService {
     }
 
     /// Auto-ingest content from a file into the knowledge graph.
+    /// Deduplicates by title + source — updates existing node if found.
     pub async fn ingest_file(
         &self,
         project_id: &str,
@@ -195,6 +196,12 @@ impl KnowledgeService {
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| file_path.to_string());
+
+        // Check if a node with this title already exists for this project (auto_ingest source)
+        let existing = self.repo.search_nodes(project_id, Some(&title), None, None, 1).await?;
+        if let Some(node) = existing.into_iter().find(|n| n.title == title && n.source == "auto_ingest") {
+            return self.update_node(&node.id, Some(&title), Some(content), Some(kind), None, None).await;
+        }
 
         self.create_node(
             project_id,

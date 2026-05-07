@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
-import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { OverviewPanel } from './OverviewPanel';
 import { GitPanel } from './GitPanel';
 import { KeysPanel } from './KeysPanel';
@@ -12,9 +11,57 @@ import { LaunchpadPanel } from './LaunchpadPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { AgentPanel } from './AgentPanel';
 import type { Project } from '../../types';
-import { FolderOpen, ScrollText, Play, LayoutDashboard, Lock, GitBranch, Terminal, Rocket, Database, Bot } from 'lucide-react';
+import {
+    FolderOpen, ScrollText, Play, LayoutDashboard, Lock, GitBranch,
+    Terminal, Rocket, Database, Bot, PanelLeftClose, PanelLeft,
+    type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { ErrorBoundary } from '../ui/error-boundary';
+
+interface NavItem {
+    id: string;
+    label: string;
+    icon: LucideIcon;
+}
+
+interface NavGroup {
+    label: string;
+    items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+    {
+        label: 'Core',
+        items: [
+            { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+            { id: 'agent', label: 'Agent', icon: Bot },
+        ],
+    },
+    {
+        label: 'Infrastructure',
+        items: [
+            { id: 'processes', label: 'Processes', icon: Terminal },
+            { id: 'database', label: 'Databases', icon: Database },
+            { id: 'keys', label: 'Keys & Secrets', icon: Lock },
+        ],
+    },
+    {
+        label: 'Development',
+        items: [
+            { id: 'git', label: 'Git', icon: GitBranch },
+            { id: 'scripts', label: 'Scripts', icon: Play },
+            { id: 'launchpad', label: 'Launchpad', icon: Rocket },
+        ],
+    },
+    {
+        label: 'Content',
+        items: [
+            { id: 'notes', label: 'Notes', icon: ScrollText },
+            { id: 'snippets', label: 'Snippets', icon: ScrollText },
+        ],
+    },
+];
 
 interface ProjectWorkspaceProps {
     project: Project;
@@ -23,15 +70,43 @@ interface ProjectWorkspaceProps {
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose }) => {
     const [activeTab, setActiveTab] = useState('overview');
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-    const handleRunSnippet = async (command: string) => {
+    const handleRunSnippet = useCallback(async (command: string) => {
         try {
             await navigator.clipboard.writeText(command);
             toast.success("Command copied to clipboard!");
-        } catch (err) {
+        } catch {
             toast.error("Failed to copy command");
         }
-    };
+    }, []);
+
+    const panelContent = useMemo(() => {
+        switch (activeTab) {
+            case 'overview':
+                return <OverviewPanel project={project} onNavigate={setActiveTab} />;
+            case 'launchpad':
+                return <LaunchpadPanel projectId={project.id} projectPath={project.path} />;
+            case 'agent':
+                return <AgentPanel projectId={project.id} project={project} />;
+            case 'scripts':
+                return <ScriptRunner path={project.path} onNavigate={setActiveTab} />;
+            case 'git':
+                return <GitPanel path={project.path} />;
+            case 'keys':
+                return <KeysPanel projectId={project.id} />;
+            case 'snippets':
+                return <SnippetsPanel projectId={project.id} onRun={handleRunSnippet} />;
+            case 'notes':
+                return <NotesPanel projectId={project.id} />;
+            case 'processes':
+                return <ProcessManager path={project.path} projectId={project.id} />;
+            case 'database':
+                return <DatabasePanel projectId={project.id} />;
+            default:
+                return null;
+        }
+    }, [activeTab, project, handleRunSnippet]);
 
     return (
         <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
@@ -51,140 +126,56 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                     </div>
                 </DialogHeader>
 
-                <div className="flex-1 overflow-hidden flex flex-col">
-                    <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-                        <div className="px-4 py-2 border-b border-border/40 bg-muted/20">
-                            <TabsList className="bg-muted/50">
-                                <TabsTrigger value="overview" className="gap-2">
-                                    <LayoutDashboard className="w-3.5 h-3.5" />
-                                    Overview
-                                </TabsTrigger>
-                                <TabsTrigger value="launchpad" className="gap-2">
-                                    <Rocket className="w-3.5 h-3.5" />
-                                    Launchpad
-                                </TabsTrigger>
-                                <TabsTrigger value="agent" className="gap-2">
-                                    <Bot className="w-3.5 h-3.5" />
-                                    Agent
-                                </TabsTrigger>
-                                <TabsTrigger value="scripts" className="gap-2">
-                                    <Play className="w-3.5 h-3.5" />
-                                    Scripts
-                                </TabsTrigger>
-                                <TabsTrigger value="git" className="gap-2">
-                                    <GitBranch className="w-3.5 h-3.5" />
-                                    Git
-                                </TabsTrigger>
-                                <TabsTrigger value="keys" className="gap-2">
-                                    <Lock className="w-3.5 h-3.5" />
-                                    Keys
-                                </TabsTrigger>
-                                <TabsTrigger value="snippets" className="gap-2">
-                                    <ScrollText className="w-3.5 h-3.5" />
-                                    Snippets
-                                </TabsTrigger>
-                                <TabsTrigger value="notes" className="gap-2">
-                                    <ScrollText className="w-3.5 h-3.5" />
-                                    Notes
-                                </TabsTrigger>
-                                <TabsTrigger value="processes" className="gap-2">
-                                    <Terminal className="w-3.5 h-3.5" />
-                                    Processes
-                                </TabsTrigger>
-                                <TabsTrigger value="database" className="gap-2">
-                                    <Database className="w-3.5 h-3.5" />
-                                    Databases
-                                </TabsTrigger>
-                            </TabsList>
+                <div className="flex-1 overflow-hidden flex flex-row">
+                    {/* Sidebar Navigation */}
+                    <nav className={`${sidebarCollapsed ? 'w-12' : 'w-48'} shrink-0 border-r border-border/40 bg-muted/10 flex flex-col transition-all duration-200`}>
+                        <div className="flex-1 overflow-y-auto py-2">
+                            {NAV_GROUPS.map((group) => (
+                                <div key={group.label} className="mb-1">
+                                    {!sidebarCollapsed && (
+                                        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                                            {group.label}
+                                        </div>
+                                    )}
+                                    {group.items.map((item) => {
+                                        const Icon = item.icon;
+                                        const isActive = activeTab === item.id;
+                                        return (
+                                            <button
+                                                key={item.id}
+                                                onClick={() => setActiveTab(item.id)}
+                                                title={sidebarCollapsed ? item.label : undefined}
+                                                className={`w-full flex items-center gap-2.5 text-xs font-medium transition-colors ${
+                                                    sidebarCollapsed ? 'justify-center px-0 py-2 mx-auto' : 'px-3 py-1.5'
+                                                } ${
+                                                    isActive
+                                                        ? 'text-primary bg-primary/10 border-r-2 border-primary'
+                                                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                                                }`}
+                                            >
+                                                <Icon className="w-3.5 h-3.5 shrink-0" />
+                                                {!sidebarCollapsed && item.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ))}
                         </div>
-                        
-                        <div className="flex-1 overflow-hidden p-0 bg-background relative">
-                            {activeTab === 'overview' && (
-                                <ErrorBoundary>
-                                    <OverviewPanel project={project} onNavigate={setActiveTab} />
-                                </ErrorBoundary>
-                            )}
+                        <button
+                            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                            className="p-2 border-t border-border/40 text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center"
+                            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                        >
+                            {sidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+                        </button>
+                    </nav>
 
-                            <div className={activeTab === 'launchpad' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'launchpad' && (
-                                    <ErrorBoundary>
-                                        <LaunchpadPanel projectId={project.id} projectPath={project.path} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'agent' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'agent' && (
-                                    <ErrorBoundary>
-                                        <AgentPanel projectId={project.id} project={project} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'scripts' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'scripts' && (
-                                    <ErrorBoundary>
-                                        <ScriptRunner path={project.path} onNavigate={setActiveTab} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'git' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'git' && (
-                                    <ErrorBoundary>
-                                        <GitPanel path={project.path} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'keys' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'keys' && (
-                                    <ErrorBoundary>
-                                        <KeysPanel
-                                            projectId={project.id}
-                                        />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'snippets' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'snippets' && (
-                                    <ErrorBoundary>
-                                        <SnippetsPanel
-                                            projectId={project.id}
-                                            onRun={handleRunSnippet}
-                                        />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'notes' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'notes' && (
-                                    <ErrorBoundary>
-                                        <NotesPanel
-                                            projectId={project.id}
-                                        />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'processes' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'processes' && (
-                                    <ErrorBoundary>
-                                        <ProcessManager path={project.path} projectId={project.id} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-
-                            <div className={activeTab === 'database' ? 'h-full' : 'hidden h-full'}>
-                                {activeTab === 'database' && (
-                                    <ErrorBoundary>
-                                        <DatabasePanel projectId={project.id} />
-                                    </ErrorBoundary>
-                                )}
-                            </div>
-                        </div>
-                    </Tabs>
+                    {/* Panel Content */}
+                    <div className="flex-1 overflow-hidden bg-background relative">
+                        <ErrorBoundary key={activeTab}>
+                            {panelContent}
+                        </ErrorBoundary>
+                    </div>
                 </div>
             </DialogContent>
         </Dialog>

@@ -108,9 +108,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({ project }) => {
 
     useEffect(() => {
         if (view === 'knowledge') {
-            loadKnowledgeNodes();
+            // Auto-ingest project docs on first knowledge view, then load nodes
+            const ingestAndLoad = async () => {
+                try {
+                    await invokeCommand('auto_ingest_project_docs', { projectId: project.id, projectPath: project.path });
+                } catch {
+                    // Non-critical — may fail if docs don't exist
+                }
+                await loadKnowledgeNodes();
+            };
+            ingestAndLoad();
         }
-    }, [view, loadKnowledgeNodes]);
+    }, [view, loadKnowledgeNodes, project.id, project.path]);
 
     const handleSaveConfig = async () => {
         setSetupSaving(true);
@@ -226,6 +235,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({ project }) => {
         }
 
         const projectContext = {
+            projectId: project.id,
             name: project.name,
             path: project.path,
             scripts,

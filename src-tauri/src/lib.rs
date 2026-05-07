@@ -42,7 +42,7 @@ pub fn run() {
 
       tauri::async_runtime::block_on(async {
           let pool = database::init_pool(&app_data_dir).await.expect("failed to init database");
-          
+
           // Run migrations
           sqlx::migrate!("./migrations")
               .run(&pool)
@@ -51,6 +51,11 @@ pub fn run() {
 
           app_handle.manage(pool);
       });
+
+      // Provision MCP auth token on startup (generates if not present)
+      if let Err(e) = modules::mcp::service::McpService::ensure_token() {
+          tracing::warn!("Failed to provision MCP auth token: {}", e);
+      }
 
       Ok(())
     })
@@ -139,6 +144,11 @@ pub fn run() {
         modules::ai::commands::delete_conversation,
         modules::ai::commands::add_conversation_message,
         modules::ai::commands::get_conversation_messages,
+        // MCP Server Management
+        modules::mcp::commands::get_mcp_token,
+        modules::mcp::commands::regenerate_mcp_token,
+        modules::mcp::commands::get_mcp_client_config,
+        modules::mcp::commands::get_mcp_binary_path,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

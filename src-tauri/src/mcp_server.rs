@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::router::tool::ToolRouter,
@@ -293,6 +293,22 @@ async fn main() -> Result<()> {
         .init();
 
     tracing::info!("Starting Orbitae MCP server");
+
+    // Validate auth token — the launching client must pass ORBITAE_MCP_TOKEN
+    let provided_token = std::env::var("ORBITAE_MCP_TOKEN").unwrap_or_default();
+    if provided_token.is_empty() {
+        bail!("ORBITAE_MCP_TOKEN environment variable is required. Get it from Orbitae Settings > MCP.");
+    }
+
+    let vault = app_lib::modules::vault::service::VaultService::new("com.orbitae.app");
+    let expected_token = vault.get_secret("mcp-auth-token")
+        .map_err(|_| anyhow::anyhow!("MCP auth token not found in keychain. Launch Orbitae first to generate it."))?;
+
+    if provided_token != expected_token {
+        bail!("Invalid MCP auth token. Regenerate from Orbitae Settings > MCP.");
+    }
+
+    tracing::info!("Auth token validated");
 
     // Connect to the same database Orbitae uses
     let app_data_dir = dirs::data_dir()
