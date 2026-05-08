@@ -98,10 +98,16 @@ pub struct PlaybookStep {
     pub id: String,
     pub playbook_id: String,
     pub name: String,
-    pub r#type: String, // 'process', 'delay', 'database_query'
+    pub r#type: String,
     pub command: Option<String>,
     pub depends_on: Option<String>,
     pub expected_output: Option<String>,
+    #[sqlx(default)]
+    pub on_failure: String,
+    #[sqlx(default)]
+    pub max_retries: i32,
+    #[sqlx(default)]
+    pub retry_delay_ms: i32,
     #[sqlx(default)]
     pub created_at: String,
     #[sqlx(default)]

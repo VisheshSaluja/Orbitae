@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { invokeCommand } from '../../lib/tauri';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -7,6 +7,9 @@ import { Plus, Trash2, Globe, Rocket, Terminal, FileCode, Play } from 'lucide-re
 import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { Badge } from '../ui/badge';
+import { PlaybookRunStatus, type PlaybookRunStatusHandle } from './PlaybookRunStatus';
+import { PlaybookEditor } from './PlaybookEditor';
+import type { ProjectPlaybook, PlaybookStep } from '../../types';
 
 interface ProjectLink {
     id: string;
@@ -24,6 +27,10 @@ interface LaunchpadPanelProps {
 }
 
 export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, projectPath }) => {
+    const playbookRef = useRef<PlaybookRunStatusHandle>(null);
+    const [editorOpen, setEditorOpen] = useState(false);
+    const [editingPlaybook, setEditingPlaybook] = useState<ProjectPlaybook | undefined>();
+    const [editingSteps, setEditingSteps] = useState<PlaybookStep[] | undefined>();
     const [links, setLinks] = useState<ProjectLink[]>([]);
     const [newTitle, setNewTitle] = useState('');
     const [newValue, setNewValue] = useState('');
@@ -115,7 +122,12 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
     };
 
     const handleOpenAll = async () => {
-        if (links.length === 0) return;
+        if (links.length === 0 && !playbookRef.current?.hasPlaybooks) return;
+
+        if (playbookRef.current?.hasPlaybooks && !playbookRef.current.isRunning) {
+            playbookRef.current.runFirst();
+        }
+
         let successCount = 0;
         try {
             for (const link of links) {
@@ -133,12 +145,39 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
                     successCount++;
                 }
             }
-            toast.success(`Launched ${successCount} items`);
+            if (successCount > 0) {
+                toast.success(`Launched ${successCount} items`);
+            }
         } catch (e) {
             console.error(e);
             toast.error("Launch sequence interrupted");
         }
     };
+
+    const handleNewPlaybook = useCallback(() => {
+        setEditingPlaybook(undefined);
+        setEditingSteps(undefined);
+        setEditorOpen(true);
+    }, []);
+
+    const handleEditPlaybook = useCallback(async (playbookId: string) => {
+        try {
+            const playbooks = await invokeCommand<ProjectPlaybook[]>('get_project_playbooks', { projectId });
+            const pb = playbooks.find(p => p.id === playbookId);
+            const steps = await invokeCommand<PlaybookStep[]>('get_playbook_steps', { playbookId });
+            setEditingPlaybook(pb);
+            setEditingSteps(steps);
+            setEditorOpen(true);
+        } catch {
+            toast.error('Failed to load playbook');
+        }
+    }, [projectId]);
+
+    const handleEditorClose = useCallback(() => {
+        setEditorOpen(false);
+        setEditingPlaybook(undefined);
+        setEditingSteps(undefined);
+    }, []);
 
     const repos = links.filter(l => l.kind === 'repository');
     const commands = links.filter(l => l.kind === 'command');
@@ -190,6 +229,21 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
             </CardContent>
         </Card>
     );
+
+    if (editorOpen) {
+        return (
+            <PlaybookEditor
+                projectId={projectId}
+                playbook={editingPlaybook}
+                existingSteps={editingSteps}
+                onClose={handleEditorClose}
+                onSaved={() => {
+                    handleEditorClose();
+                    // PlaybookRunStatus will reload on its own via loadPlaybooks
+                }}
+            />
+        );
+    }
 
     return (
         <div className="h-full w-full p-6 overflow-y-auto bg-muted/5 scrollbar-thin">
@@ -279,7 +333,16 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
 
                 {/* Sections */}
                 <div className="space-y-8">
-                    
+
+                    {/* Playbooks */}
+                    <PlaybookRunStatus
+                        ref={playbookRef}
+                        projectId={projectId}
+                        projectPath={projectPath}
+                        onNewPlaybook={handleNewPlaybook}
+                        onEditPlaybook={handleEditPlaybook}
+                    />
+
                     {/* Repositories */}
                     <div className="space-y-3">
                         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">

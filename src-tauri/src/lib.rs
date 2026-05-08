@@ -149,6 +149,12 @@ pub fn run() {
         modules::mcp::commands::regenerate_mcp_token,
         modules::mcp::commands::get_mcp_client_config,
         modules::mcp::commands::get_mcp_binary_path,
+        // Playbook Engine
+        modules::playbooks::commands::run_playbook,
+        modules::playbooks::commands::get_playbook_run,
+        modules::playbooks::commands::get_project_playbook_runs,
+        modules::playbooks::commands::export_playbook_yaml,
+        modules::playbooks::commands::import_playbook_yaml,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -47,16 +47,17 @@
 - [ ] Test with Claude Code, Cursor, and at least one other MCP client
 
 ### P1.4 — Playbook Engine v2 (Priority #3)
-- [ ] Playbook execution engine in Rust (currently just storage)
-- [ ] Step types: command, health_check (HTTP/TCP), db_query, delay, conditional
-- [ ] Parallel execution for independent steps
-- [ ] Failure handling: retry (with backoff), skip, abort, cleanup steps
-- [ ] Health check primitives: wait for HTTP 200, wait for TCP port, wait for process output
-- [ ] Visual DAG editor in React (drag-and-drop steps, draw dependency arrows)
-- [ ] "One-click start" button on project dashboard
-- [ ] Export/import playbooks as YAML
-- [ ] AI-generated playbooks (Agent Hub generates, user reviews, saves)
-- [ ] **Knowledge Graph integration:** Playbook results auto-create/update knowledge nodes (e.g., "deployment succeeded" updates runbook node)
+- [x] Playbook execution engine in Rust (PlaybookExecutor, PlaybookRunRepository, run/step tracking in SQLite, Tauri events)
+- [x] Step types: command, health_check (HTTP/TCP), delay
+- [x] Parallel execution for independent steps (wave-based via depends_on + JoinSet)
+- [x] Failure handling: retry (with backoff), skip, abort
+- [x] Execution status UI: real-time step progress, output viewer, run history (PlaybookRunStatus component)
+- [x] Health check primitives: wait for HTTP 200 (poll 30s), wait for TCP port (poll 30s)
+- [x] Visual DAG editor in React (React Flow, drag-and-drop steps, dependency arrows, properties panel)
+- [x] "One-click start" button on project dashboard (Launch Environment runs first playbook + all links)
+- [x] Export/import playbooks as YAML (serde_yaml, download/upload via UI)
+- [x] AI-generated playbooks (uses configured AI provider to generate YAML from project scripts)
+- [x] **Knowledge Graph integration:** Playbook results auto-create/update knowledge nodes (e.g., "deployment succeeded" updates runbook node)
 
 ### P1.5 — Environment Manager
 - [ ] Environment profiles data model (dev, staging, prod, custom)

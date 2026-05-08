@@ -100,6 +100,9 @@ export interface PlaybookStep {
     command?: string;
     depends_on?: string;
     expected_output?: string;
+    on_failure: string;
+    max_retries: number;
+    retry_delay_ms: number;
     created_at: string;
     updated_at: string;
 }
@@ -119,6 +122,38 @@ export interface ProjectLink {
     kind: 'url' | 'command' | 'repository';
     working_directory?: string;
     created_at: string;
+}
+
+export type RunStatus = 'pending' | 'running' | 'passed' | 'failed' | 'aborted' | 'skipped';
+
+export interface PlaybookRun {
+    id: string;
+    playbook_id: string;
+    project_id: string;
+    status: RunStatus;
+    started_at: string | null;
+    finished_at: string | null;
+    created_at: string;
+}
+
+export interface StepRun {
+    id: string;
+    run_id: string;
+    step_id: string;
+    step_name: string;
+    step_type: string;
+    status: RunStatus;
+    exit_code: number | null;
+    stdout: string | null;
+    stderr: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+    attempt: number;
+}
+
+export interface PlaybookRunWithSteps {
+    run: PlaybookRun;
+    steps: StepRun[];
 }
 
 export interface QueryResult {

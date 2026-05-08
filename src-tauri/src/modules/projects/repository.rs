@@ -313,6 +313,17 @@ impl ProjectRepository {
         })
     }
 
+    /// Gets a single playbook by ID.
+    pub async fn get_project_playbooks_by_id(&self, id: &str) -> Result<Option<ProjectPlaybook>> {
+        let playbook = sqlx::query_as::<_, ProjectPlaybook>(
+            "SELECT id, project_id, name, description, created_at, updated_at FROM project_playbooks WHERE id = ?"
+        )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(playbook)
+    }
+
     pub async fn get_project_playbooks(&self, project_id: &str) -> Result<Vec<ProjectPlaybook>> {
         let playbooks = sqlx::query_as::<_, ProjectPlaybook>("SELECT id, project_id, name, description, created_at, updated_at FROM project_playbooks WHERE project_id = ? ORDER BY created_at DESC")
             .bind(project_id)
@@ -353,13 +364,16 @@ impl ProjectRepository {
             command,
             depends_on,
             expected_output,
+            on_failure: "abort".to_string(),
+            max_retries: 0,
+            retry_delay_ms: 1000,
             created_at: String::new(),
             updated_at: String::new(),
         })
     }
 
     pub async fn get_playbook_steps(&self, playbook_id: &str) -> Result<Vec<PlaybookStep>> {
-        let steps = sqlx::query_as::<_, PlaybookStep>("SELECT id, playbook_id, name, type, command, depends_on, expected_output, created_at, updated_at FROM playbook_steps WHERE playbook_id = ? ORDER BY created_at ASC")
+        let steps = sqlx::query_as::<_, PlaybookStep>("SELECT id, playbook_id, name, type, command, depends_on, expected_output, on_failure, max_retries, retry_delay_ms, created_at, updated_at FROM playbook_steps WHERE playbook_id = ? ORDER BY created_at ASC")
             .bind(playbook_id)
             .fetch_all(&self.pool)
             .await?;

@@ -9,3 +9,4 @@ pub mod databases;
 pub mod knowledge;
 pub mod ai;
 pub mod mcp;
+pub mod playbooks;
