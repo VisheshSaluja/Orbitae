@@ -80,7 +80,12 @@
 - [x] Navigation groups: Core, Infrastructure, Development, Content
 - [x] Collapsible sidebar with icon-only mode
 - [x] Active tab highlight with primary color accent border
-- [ ] Keyboard shortcuts for sidebar navigation (Cmd+1–9)
+- [x] **Agent-first simplification:** Collapse 10 tabs → 4 views (Command Center, Agent, Workspace, Settings)
+- [x] **Command Center panel:** Merge Overview + Launchpad + Processes into single cockpit view
+- [x] **Workspace panel:** Merge Notes + Snippets + Knowledge Graph with internal tab switching
+- [x] **Settings panel:** Merge Keys & Secrets + Database connections + AI provider config
+- [x] Remove Git and Scripts as standalone tabs (agent handles, surfaced contextually)
+- [ ] Keyboard shortcuts for sidebar navigation (Cmd+1–4)
 
 ### P1.7 — Polish & Distribution
 - [ ] Apple Developer Certificate + code signing
