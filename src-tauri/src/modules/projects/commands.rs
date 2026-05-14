@@ -179,13 +179,17 @@ pub async fn delete_project_key(
 
 #[command]
 pub async fn reveal_secret(
-    pool: State<'_, SqlitePool>,
+    _pool: State<'_, SqlitePool>,
     key_reference: String,
 ) -> Result<String, String> {
-    let service = ProjectService::new(pool.inner().clone());
-    service.reveal_secret(&key_reference)
-        .await
-        .map_err(|e| e.to_string())
+    let key_ref = key_reference.clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = crate::modules::vault::service::VaultService::new("orbitae-app");
+        vault.get_secret_authenticated(&key_ref)
+    })
+    .await
+    .map_err(|e| format!("Authentication thread failed: {e}"))?
+    .map_err(|e| e.to_string())
 }
 
 // Notes

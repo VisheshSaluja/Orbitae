@@ -51,8 +51,18 @@ const DEFAULT_NODE_COLOR = '#6b7280';
 const NODE_SIZE_MIN = 5;
 const NODE_SIZE_MAX = 14;
 const LABEL_TRUNCATE_LENGTH = 28;
-const LINK_DEFAULT_COLOR = 'rgba(255,255,255,0.25)';
-const LINK_HIGHLIGHT_COLOR = 'rgba(255,255,255,0.6)';
+function getLinkColor(highlight: boolean): string {
+    const isDark = document.documentElement.classList.contains('dark');
+    if (highlight) return isDark ? 'rgba(255,255,255,0.7)' : 'rgba(80,80,120,0.6)';
+    return isDark ? 'rgba(255,255,255,0.25)' : 'rgba(80,80,120,0.25)';
+}
+
+function getLabelColor(dimmed: boolean): string {
+    const isDark = document.documentElement.classList.contains('dark');
+    if (dimmed) return isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)';
+    return isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.75)';
+}
+
 
 /** Link distance varies by relation type for visual clarity. */
 const LINK_DISTANCE_BY_RELATION: Record<string, number> = {
@@ -107,9 +117,10 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
 
     const graphContainerRef = useRef<HTMLDivElement>(null);
     const graphRef = useRef<ForceGraphMethods<NodeObject<GraphNode>, LinkObject<GraphNode, GraphLink>> | undefined>(undefined);
-    const [graphDimensions, setGraphDimensions] = useState<{ width: number; height: number }>({ width: 600, height: 400 });
+    const isScanningRef = useRef(false);
+    const [graphDimensions, setGraphDimensions] = useState<{ width: number; height: number } | null>(null);
 
-    // Measure graph container dimensions
+    // Measure graph container and re-zoom on resize
     useEffect(() => {
         const container = graphContainerRef.current;
         if (!container) return;
@@ -119,6 +130,10 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
                 const { width, height } = entry.contentRect;
                 if (width > 0 && height > 0) {
                     setGraphDimensions({ width: Math.floor(width), height: Math.floor(height) });
+                    // Re-zoom after dimension change
+                    setTimeout(() => {
+                        graphRef.current?.zoomToFit(300, 50);
+                    }, 200);
                 }
             }
         });
@@ -147,13 +162,18 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
 
     useEffect(() => {
         if (activeTab === 'knowledge') {
+            if (isScanningRef.current) return;
+            isScanningRef.current = true;
             const ingestAndLoad = async () => {
-                // Ingest docs and scan codebase in parallel (both are best-effort)
-                await Promise.allSettled([
-                    invokeCommand('auto_ingest_project_docs', { projectId, projectPath }),
-                    invokeCommand('scan_project_codebase', { projectId, projectPath }),
-                ]);
-                await Promise.all([loadKnowledgeNodes(), loadKnowledgeEdges()]);
+                try {
+                    await Promise.allSettled([
+                        invokeCommand('auto_ingest_project_docs', { projectId, projectPath }),
+                        invokeCommand('scan_project_codebase', { projectId, projectPath }),
+                    ]);
+                    await Promise.all([loadKnowledgeNodes(), loadKnowledgeEdges()]);
+                } finally {
+                    isScanningRef.current = false;
+                }
             };
             ingestAndLoad();
         }
@@ -206,16 +226,25 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
         return { nodes, links };
     }, [knowledgeNodes, knowledgeEdges]);
 
-    // Configure d3 link force distance by relation type
+    // Configure d3 forces and zoom-to-fit after graph settles
     useEffect(() => {
         const fg = graphRef.current;
         if (!fg) return;
+
+        // Increase repulsion so nodes spread to fill the canvas
+        const chargeForce = fg.d3Force('charge');
+        if (chargeForce && typeof (chargeForce as Record<string, unknown>).strength === 'function') {
+            (chargeForce as unknown as { strength: (v: number) => void }).strength(-120);
+        }
+
+        // Link distance varies by relation type
         const linkForce = fg.d3Force('link');
         if (linkForce && typeof (linkForce as Record<string, unknown>).distance === 'function') {
             (linkForce as unknown as { distance: (fn: (link: GraphLink) => number) => void }).distance(
                 (link: GraphLink) => LINK_DISTANCE_BY_RELATION[link.relation] ?? 80
             );
         }
+
     }, [graphData]);
 
     const selectedNode = useMemo(() => {
@@ -290,7 +319,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
                 ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
-                ctx.fillStyle = isDimmed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.85)';
+                ctx.fillStyle = getLabelColor(isDimmed);
                 ctx.fillText(label, x, y + size + 2);
             }
         },
@@ -312,50 +341,30 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
 
     const linkColor = useCallback(
         (link: LinkObject<GraphNode, GraphLink>) => {
-            if (!hoveredNodeId) return LINK_DEFAULT_COLOR;
+            if (!hoveredNodeId) return getLinkColor(false);
             const sourceId = typeof link.source === 'object' ? (link.source as GraphNode)?.id : link.source;
             const targetId = typeof link.target === 'object' ? (link.target as GraphNode)?.id : link.target;
-            if (sourceId === hoveredNodeId || targetId === hoveredNodeId) return LINK_HIGHLIGHT_COLOR;
-            return LINK_DEFAULT_COLOR;
+            if (sourceId === hoveredNodeId || targetId === hoveredNodeId) return getLinkColor(true);
+            return getLinkColor(false);
         },
         [hoveredNodeId],
     );
 
     const linkWidth = useCallback(
         (link: LinkObject<GraphNode, GraphLink>) => {
-            if (!hoveredNodeId) return 0.8;
+            if (!hoveredNodeId) return 1;
             const sourceId = typeof link.source === 'object' ? (link.source as GraphNode)?.id : link.source;
             const targetId = typeof link.target === 'object' ? (link.target as GraphNode)?.id : link.target;
-            if (sourceId === hoveredNodeId || targetId === hoveredNodeId) return 2;
-            return 0.4;
+            if (sourceId === hoveredNodeId || targetId === hoveredNodeId) return 2.5;
+            return 0.5;
         },
         [hoveredNodeId],
     );
 
-    const linkCanvasObject = useCallback(
-        (link: LinkObject<GraphNode, GraphLink>, ctx: CanvasRenderingContext2D, globalScale: number) => {
-            // Only draw edge labels when zoomed in enough
-            if (globalScale < 1.5) return;
-
-            const source = link.source as NodeObject<GraphNode> | undefined;
-            const target = link.target as NodeObject<GraphNode> | undefined;
-            if (!source?.x || !source?.y || !target?.x || !target?.y) return;
-
-            const midX = (source.x + target.x) / 2;
-            const midY = (source.y + target.y) / 2;
-
-            const relation = (link as unknown as GraphLink).relation ?? '';
-            if (!relation) return;
-
-            const fontSize = Math.max(8 / globalScale, 2);
-            ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = 'rgba(255,255,255,0.4)';
-            ctx.fillText(relation, midX, midY);
-        },
-        [],
-    );
+    const handleEngineStop = useCallback(() => {
+        const fg = graphRef.current;
+        if (fg) fg.zoomToFit(400, 60);
+    }, []);
 
     return (
         <div className="h-full flex flex-col bg-background">
@@ -444,7 +453,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
                             <div className="flex-1 flex overflow-hidden min-h-0">
                                 {/* Force-directed graph — fills all available space */}
                                 <div ref={graphContainerRef} className="flex-1 w-full h-full min-h-0 min-w-0 relative">
-                                    <ForceGraph2D
+                                    {graphDimensions && <ForceGraph2D
                                         ref={graphRef as React.MutableRefObject<ForceGraphMethods<NodeObject<GraphNode>, LinkObject<GraphNode, GraphLink>> | undefined>}
                                         width={graphDimensions.width}
                                         height={graphDimensions.height}
@@ -458,20 +467,20 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
                                         nodePointerAreaPaint={nodePointerAreaPaint}
                                         linkColor={linkColor}
                                         linkWidth={linkWidth}
-                                        linkCanvasObject={linkCanvasObject}
-                                        linkCanvasObjectMode={() => 'after'}
-                                        linkDirectionalArrowLength={3}
+                                        linkDirectionalArrowLength={3.5}
                                         linkDirectionalArrowRelPos={1}
+                                        linkDirectionalArrowColor={linkColor}
                                         onNodeClick={handleNodeClick}
                                         onNodeHover={handleNodeHover}
                                         onBackgroundClick={handleBackgroundClick}
+                                        onEngineStop={handleEngineStop}
                                         enableNodeDrag={true}
                                         enableZoomInteraction={true}
                                         enablePanInteraction={true}
-                                        cooldownTicks={60}
-                                        d3AlphaDecay={0.04}
-                                        d3VelocityDecay={0.4}
-                                    />
+                                        cooldownTicks={80}
+                                        d3AlphaDecay={0.03}
+                                        d3VelocityDecay={0.35}
+                                    />}
                                 </div>
 
                                 {/* Detail panel */}

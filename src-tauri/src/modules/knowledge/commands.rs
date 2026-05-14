@@ -266,7 +266,10 @@ pub async fn auto_ingest_project_docs(
 /// Directories to skip during codebase scanning.
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", "target", "dist", "build", ".next",
-    "__pycache__", ".venv", ".idea", ".vscode", ".DS_Store",
+    "__pycache__", ".venv", "venv", "env", ".idea", ".vscode", ".DS_Store",
+    "site-packages", "vendor", ".gradle", "Pods", ".cache", ".tox",
+    ".mypy_cache", ".pytest_cache", ".eggs", "egg-info", ".nox",
+    "bower_components", ".yarn", ".pnp", "coverage", ".nyc_output",
 ];
 
 /// Source file extensions eligible for ingestion.
@@ -439,6 +442,13 @@ pub async fn scan_project_codebase(
             "Project path does not exist or is not a directory: {}",
             project_path
         )));
+    }
+
+    // Purge old codebase_scan nodes so we get a clean rescan with current skip list
+    let purged = service.delete_nodes_by_source(&project_id, "codebase_scan").await
+        .unwrap_or(0);
+    if purged > 0 {
+        tracing::info!(project_id = project_id, purged = purged, "Purged stale codebase_scan nodes");
     }
 
     // Collect all eligible files first

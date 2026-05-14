@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CommandCenterPanel } from './CommandCenterPanel';
 import { AgentPanel } from './AgentPanel';
@@ -131,7 +130,6 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     }, [activeTab, project, handleNavigate]);
 
     return (
-        <>
         <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="max-w-[95vw] md:max-w-7xl h-[90vh] flex flex-col p-0 gap-0 border-border bg-background overflow-hidden shadow-2xl">
                 <DialogHeader className="px-4 py-2.5 border-b border-border/40 bg-background flex flex-row items-center justify-between shrink-0">
@@ -202,9 +200,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                 </div>
             </DialogContent>
 
-        </Dialog>
-
-            {paletteOpen && createPortal(
+            {paletteOpen && (
                 <div
                     className="fixed inset-0 z-[9999] flex items-start justify-center pt-[20vh]"
                     onClick={() => setPaletteOpen(false)}
@@ -257,9 +253,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                             })}
                         </div>
                     </div>
-                </div>,
-                document.body
+                </div>
             )}
-        </>
+        </Dialog>
     );
 };

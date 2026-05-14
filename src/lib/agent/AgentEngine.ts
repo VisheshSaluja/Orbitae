@@ -188,16 +188,16 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
                 onTextChunk(chunk);
             }
 
-            // If model called tools but produced no text, synthesize a response
+            // Strip leaked tool call JSON from text stream
+            // Some models emit {"tool_call":...} or {"name":"toolName",...} as text
+            fullText = fullText.replace(/\{"(?:tool_call|function_call|name|type)"\s*:[\s\S]*?\}\s*/g, '').trim();
+
+            // If model called tools but produced no text, synthesize a readable summary
             if (!fullText.trim() && collectedToolResults.length > 0) {
-                const summary = collectedToolResults.map(tr => {
-                    const resultStr = typeof tr.result === 'string'
-                        ? tr.result
-                        : JSON.stringify(tr.result, null, 2);
-                    const truncated = resultStr.length > 500 ? resultStr.substring(0, 500) + '...' : resultStr;
-                    return `**${tr.toolName}**:\n\`\`\`\n${truncated}\n\`\`\``;
-                }).join('\n\n');
-                fullText = `Here's what I found:\n\n${summary}`;
+                const summaryParts = collectedToolResults.map(tr => {
+                    return this.formatToolResult(tr.toolName, tr.result);
+                });
+                fullText = summaryParts.join('\n\n');
                 onTextChunk(fullText);
             }
 
@@ -211,5 +211,45 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
 
     isConfigured(): boolean {
         return this.providerInstance !== null;
+    }
+
+    private formatToolResult(toolName: string, result: unknown): string {
+        if (result === null || result === undefined) {
+            return `Done: **${toolName}** completed.`;
+        }
+
+        if (typeof result === 'string') {
+            return result.length > 300 ? result.substring(0, 300) + '...' : result;
+        }
+
+        if (Array.isArray(result)) {
+            if (result.length === 0) return `**${toolName}**: No results found.`;
+            const items = result.slice(0, 5).map(item => {
+                if (typeof item === 'object' && item !== null) {
+                    const name = (item as Record<string, unknown>).name
+                        || (item as Record<string, unknown>).title
+                        || (item as Record<string, unknown>).id
+                        || '';
+                    const status = (item as Record<string, unknown>).status || '';
+                    return `- ${name}${status ? ` (${status})` : ''}`;
+                }
+                return `- ${String(item)}`;
+            });
+            const suffix = result.length > 5 ? `\n- ...and ${result.length - 5} more` : '';
+            return `**${toolName}** (${result.length} results):\n${items.join('\n')}${suffix}`;
+        }
+
+        if (typeof result === 'object') {
+            const obj = result as Record<string, unknown>;
+            if (obj.success !== undefined) {
+                return obj.success ? `**${toolName}**: Success.` : `**${toolName}**: Failed.`;
+            }
+            if (obj.msg) return `**${toolName}**: ${obj.msg}`;
+            const preview = JSON.stringify(result);
+            if (preview.length > 300) return `**${toolName}**: Operation completed.`;
+            return `**${toolName}**: ${preview}`;
+        }
+
+        return `**${toolName}**: ${String(result)}`;
     }
 }

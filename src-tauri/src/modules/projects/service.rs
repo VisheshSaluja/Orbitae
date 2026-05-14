@@ -101,7 +101,7 @@ impl ProjectService {
 
     pub async fn reveal_secret(&self, key_reference: &str) -> Result<String> {
         let vault = crate::modules::vault::service::VaultService::new("orbitae-app");
-        vault.get_secret(key_reference)
+        vault.get_secret_authenticated(key_reference)
     }
 
     pub async fn delete_key(&self, id: &str, key_reference: &str) -> Result<()> {

@@ -223,6 +223,11 @@ impl KnowledgeService {
         self.repo.find_node_by_title_and_source(project_id, title, source).await
     }
 
+    /// Delete all nodes with a given source for a project, along with their edges.
+    pub async fn delete_nodes_by_source(&self, project_id: &str, source: &str) -> Result<u64> {
+        self.repo.delete_nodes_by_source(project_id, source).await
+    }
+
     /// Ingest a source file from the codebase into the knowledge graph.
     /// Uses the relative file path as the title and deduplicates by title + source.
     pub async fn ingest_codebase_file(

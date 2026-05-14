@@ -211,6 +211,36 @@ impl KnowledgeRepository {
         Ok(edges)
     }
 
+    /// Delete all nodes with a given source for a project, along with their edges.
+    pub async fn delete_nodes_by_source(&self, project_id: &str, source: &str) -> Result<u64> {
+        let mut tx = self.pool.begin().await?;
+
+        // Delete edges connected to nodes being removed
+        sqlx::query(
+            "DELETE FROM knowledge_edges WHERE from_node IN \
+             (SELECT id FROM knowledge_nodes WHERE project_id = ? AND source = ?) \
+             OR to_node IN \
+             (SELECT id FROM knowledge_nodes WHERE project_id = ? AND source = ?)"
+        )
+            .bind(project_id)
+            .bind(source)
+            .bind(project_id)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
+
+        let result = sqlx::query(
+            "DELETE FROM knowledge_nodes WHERE project_id = ? AND source = ?"
+        )
+            .bind(project_id)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(result.rows_affected())
+    }
+
     /// Find a node by exact title and source for a given project.
     pub async fn find_node_by_title_and_source(
         &self,

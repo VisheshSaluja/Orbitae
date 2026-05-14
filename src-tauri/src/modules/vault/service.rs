@@ -28,11 +28,41 @@ impl VaultService {
         Ok(secret)
     }
 
+    /// Retrieve a secret after verifying the user's identity via biometric or password.
+    pub fn get_secret_authenticated(&self, key: &str) -> Result<String> {
+        Self::require_biometric_auth("reveal a stored secret")?;
+        self.get_secret(key)
+    }
+
     pub fn delete_secret(&self, key: &str) -> Result<()> {
         let entry = Entry::new(&self.service_name, key)
             .context("Failed to create keyring entry")?;
         entry.delete_password()
             .context("Failed to delete secret from keyring")?;
+        Ok(())
+    }
+
+    /// Prompt the user for biometric (Touch ID / Face ID) or system password authentication.
+    #[cfg(target_os = "macos")]
+    fn require_biometric_auth(reason: &str) -> Result<()> {
+        use localauthentication_rs::{LAPolicy, LocalAuthentication};
+
+        let la = LocalAuthentication::new();
+        let policy = if la.can_evaluate_policy(LAPolicy::DeviceOwnerAuthenticationWithBiometrics) {
+            LAPolicy::DeviceOwnerAuthenticationWithBiometrics
+        } else {
+            LAPolicy::DeviceOwnerAuthentication
+        };
+
+        if la.evaluate_policy(policy, reason) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Authentication failed or was cancelled"))
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn require_biometric_auth(_reason: &str) -> Result<()> {
         Ok(())
     }
 }

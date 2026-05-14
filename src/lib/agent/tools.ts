@@ -1,35 +1,32 @@
 import { invokeCommand } from '../tauri';
 import { z } from 'zod';
-import type { Process, ProjectPlaybook, KnowledgeNode, GitStatus, QueryResult } from '../../types';
+import type { Process, ProjectPlaybook, KnowledgeNode, GitStatus, QueryResult, ProjectConnection } from '../../types';
 
 export const agentTools = {
     startProcess: {
-        description: 'Start a process (like Docker, Backend, Frontend) for a specific project.',
+        description: 'Start a process (like Docker, Backend, Frontend) for a project. The cwd should be the project path.',
         parameters: z.object({
-            projectId: z.string(),
-            command: z.string(),
-            name: z.string(),
+            command: z.string().describe('Shell command to run'),
+            cwd: z.string().describe('Working directory (use the project path)'),
         }),
-        execute: async ({ projectId, command, name }: { projectId: string; command: string; name: string }) => {
-            return await invokeCommand<Process>('start_process', { projectId, cmd: command, name });
+        execute: async ({ command, cwd }: { command: string; cwd: string }) => {
+            return await invokeCommand<Process>('start_process', { command, cwd });
         },
     },
     stopProcess: {
-        description: 'Stop a running process.',
+        description: 'Stop a running process by its ID.',
         parameters: z.object({
-            processId: z.string(),
+            id: z.string().describe('The process ID to stop'),
         }),
-        execute: async ({ processId }: { processId: string }) => {
-            return await invokeCommand<void>('stop_process', { id: processId });
+        execute: async ({ id }: { id: string }) => {
+            return await invokeCommand<void>('stop_process', { id });
         },
     },
     getActiveProcesses: {
-        description: 'Get a list of currently active processes for this project.',
-        parameters: z.object({
-            projectId: z.string(),
-        }),
-        execute: async ({ projectId }: { projectId: string }) => {
-            return await invokeCommand<Process[]>('get_active_processes', { projectId });
+        description: 'Get a list of all currently active processes.',
+        parameters: z.object({}),
+        execute: async () => {
+            return await invokeCommand<Process[]>('get_active_processes', {});
         },
     },
     delay: {
@@ -52,13 +49,33 @@ export const agentTools = {
         },
     },
     runDatabaseQuery: {
-        description: 'Execute a read-only SQL query against a project database connection.',
+        description: 'Execute a read-only SQL query against a project database connection. First use listDatabaseConnections to find available connections.',
         parameters: z.object({
-            connectionId: z.string(),
-            query: z.string(),
+            projectId: z.string().describe('The project ID to look up connections'),
+            connectionName: z.string().describe('Name of the database connection to query'),
+            query: z.string().describe('SQL query to execute'),
         }),
-        execute: async ({ connectionId, query }: { connectionId: string; query: string }) => {
-            return await invokeCommand<QueryResult>('execute_query', { connectionId, query });
+        execute: async ({ projectId, connectionName, query }: { projectId: string; connectionName: string; query: string }) => {
+            const connections = await invokeCommand<ProjectConnection[]>('get_connections', { projectId });
+            const conn = connections.find(c => c.name === connectionName);
+            if (!conn) {
+                return { error: `Connection "${connectionName}" not found. Available: ${connections.map(c => c.name).join(', ')}` };
+            }
+            return await invokeCommand<QueryResult>('execute_query', {
+                kind: conn.kind,
+                details: conn.details,
+                query,
+                password: null,
+            });
+        },
+    },
+    listDatabaseConnections: {
+        description: 'List all database connections configured for a project.',
+        parameters: z.object({
+            projectId: z.string(),
+        }),
+        execute: async ({ projectId }: { projectId: string }) => {
+            return await invokeCommand<ProjectConnection[]>('get_connections', { projectId });
         },
     },
     searchKnowledge: {
