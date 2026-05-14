@@ -22,7 +22,7 @@ import { Input } from '../ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import {
-    Plus, Save, X, Terminal, Clock, Activity, ArrowLeft,
+    Save, X, Terminal, Clock, Activity, ArrowLeft,
     Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';

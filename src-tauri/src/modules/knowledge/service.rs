@@ -212,4 +212,58 @@ impl KnowledgeService {
             Some(vec!["auto".to_string(), kind.to_string()]),
         ).await
     }
+
+    /// Find a node by exact title and source for deduplication.
+    pub async fn find_node_by_title_and_source(
+        &self,
+        project_id: &str,
+        title: &str,
+        source: &str,
+    ) -> Result<Option<KnowledgeNode>> {
+        self.repo.find_node_by_title_and_source(project_id, title, source).await
+    }
+
+    /// Ingest a source file from the codebase into the knowledge graph.
+    /// Uses the relative file path as the title and deduplicates by title + source.
+    pub async fn ingest_codebase_file(
+        &self,
+        project_id: &str,
+        rel_path: &str,
+        content: &str,
+        kind: &str,
+        extension: &str,
+    ) -> Result<KnowledgeNode> {
+        // Deduplicate: skip if node with this title + source already exists
+        if let Some(existing) = self.repo.find_node_by_title_and_source(
+            project_id,
+            rel_path,
+            "codebase_scan",
+        ).await? {
+            return Ok(existing);
+        }
+
+        // Truncate content to ~2000 bytes, ensuring we don't split a multi-byte char
+        let truncated_content = if content.len() > 2000 {
+            let mut end = 2000;
+            while end > 0 && !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
+        } else {
+            content
+        };
+
+        let tags_json = serde_json::to_string(&vec![extension])?;
+        let node = self.repo.create_node(
+            project_id,
+            rel_path,
+            truncated_content,
+            kind,
+            "codebase_scan",
+            &tags_json,
+        ).await?;
+
+        tracing::debug!(project_id = project_id, file = rel_path, "Codebase file ingested");
+        Ok(node)
+    }
 }

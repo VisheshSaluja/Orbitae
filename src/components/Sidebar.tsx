@@ -1,5 +1,5 @@
-import React from 'react';
-import { LayoutGrid, Plus, FolderInput, GitBranch, ChevronUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LayoutGrid, Plus, FolderInput, GitBranch, ChevronUp, Sun, Moon } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,13 +12,33 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNewProject }) => {
+  const [isDark, setIsDark] = useState(() =>
+    document.documentElement.classList.contains('dark')
+  );
+
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('orbitae-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
+
   return (
     <div className="w-64 border-r border-border bg-card flex flex-col h-full">
-      <div className="p-6">
+      <div className="p-6 flex items-center justify-between">
         <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
           Orbitae
         </h1>
+        <button
+          onClick={() => setIsDark(prev => !prev)}
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
       </div>
 
       <nav className="flex-1 px-4 space-y-1">

@@ -38,7 +38,7 @@ export async function generatePlaybookYaml(
 
     let apiKey: string | null = null;
     if (config.key_reference) {
-        apiKey = await invokeCommand<string>('get_ai_api_key', { keyReference: config.key_reference });
+        apiKey = await invokeCommand<string | null>('get_ai_api_key', { configId: config.id });
     }
 
     const baseURLMap: Record<string, string> = {
@@ -53,8 +53,7 @@ export async function generatePlaybookYaml(
     const provider = createOpenAI({
         apiKey: apiKey || 'ollama',
         baseURL,
-        compatibility: (config.provider === 'anthropic' || config.provider === 'ollama') ? 'compatible' : 'strict',
-    });
+    } as Parameters<typeof createOpenAI>[0]);
 
     let scripts: ProjectScript[] = [];
     try {

@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CommandCenterPanel } from './CommandCenterPanel';
 import { AgentPanel } from './AgentPanel';
@@ -7,7 +8,7 @@ import { SettingsPanel } from './SettingsPanel';
 import type { Project } from '../../types';
 import {
     FolderOpen, PanelLeftClose, PanelLeft,
-    Rocket, Bot, ScrollText, Settings,
+    Rocket, Bot, ScrollText, Settings, Search,
     type LucideIcon,
 } from 'lucide-react';
 import { ErrorBoundary } from '../ui/error-boundary';
@@ -31,13 +32,88 @@ interface ProjectWorkspaceProps {
     onClose: () => void;
 }
 
+interface CommandAction {
+    id: string;
+    label: string;
+    icon: LucideIcon;
+    section: string;
+    action: () => void;
+}
+
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose }) => {
     const [activeTab, setActiveTab] = useState('command-center');
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const [paletteQuery, setPaletteQuery] = useState('');
+    const [paletteIndex, setPaletteIndex] = useState(0);
+    const paletteInputRef = useRef<HTMLInputElement>(null);
 
     const handleNavigate = useCallback((tab: string) => {
         setActiveTab(tab);
     }, []);
+
+    const commandActions: CommandAction[] = useMemo(() => [
+        { id: 'nav-command-center', label: 'Go to Command Center', icon: Rocket, section: 'Navigation', action: () => setActiveTab('command-center') },
+        { id: 'nav-agent', label: 'Go to Agent', icon: Bot, section: 'Navigation', action: () => setActiveTab('agent') },
+        { id: 'nav-workspace', label: 'Go to Workspace', icon: ScrollText, section: 'Navigation', action: () => setActiveTab('workspace') },
+        { id: 'nav-settings', label: 'Go to Settings', icon: Settings, section: 'Navigation', action: () => setActiveTab('settings') },
+        { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: PanelLeft, section: 'View', action: () => setSidebarCollapsed(p => !p) },
+        { id: 'close-project', label: 'Close Project', icon: FolderOpen, section: 'Project', action: onClose },
+    ], [onClose]);
+
+    const filteredActions = useMemo(() => {
+        if (!paletteQuery.trim()) return commandActions;
+        const q = paletteQuery.toLowerCase();
+        return commandActions.filter(a => a.label.toLowerCase().includes(q) || a.section.toLowerCase().includes(q));
+    }, [paletteQuery, commandActions]);
+
+    useEffect(() => {
+        setPaletteIndex(0);
+    }, [paletteQuery]);
+
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                setPaletteOpen(prev => !prev);
+                setPaletteQuery('');
+            }
+            if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '4') {
+                e.preventDefault();
+                const idx = parseInt(e.key) - 1;
+                if (NAV_ITEMS[idx]) setActiveTab(NAV_ITEMS[idx].id);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, []);
+
+    useEffect(() => {
+        if (paletteOpen) {
+            setTimeout(() => paletteInputRef.current?.focus(), 50);
+        }
+    }, [paletteOpen]);
+
+    const executePaletteAction = useCallback((action: CommandAction) => {
+        action.action();
+        setPaletteOpen(false);
+        setPaletteQuery('');
+    }, []);
+
+    const handlePaletteKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setPaletteIndex(i => Math.min(i + 1, filteredActions.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setPaletteIndex(i => Math.max(i - 1, 0));
+        } else if (e.key === 'Enter' && filteredActions[paletteIndex]) {
+            e.preventDefault();
+            executePaletteAction(filteredActions[paletteIndex]);
+        } else if (e.key === 'Escape') {
+            setPaletteOpen(false);
+        }
+    }, [filteredActions, paletteIndex, executePaletteAction]);
 
     const panelContent = useMemo(() => {
         switch (activeTab) {
@@ -55,6 +131,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     }, [activeTab, project, handleNavigate]);
 
     return (
+        <>
         <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="max-w-[95vw] md:max-w-7xl h-[90vh] flex flex-col p-0 gap-0 border-border bg-background overflow-hidden shadow-2xl">
                 <DialogHeader className="px-4 py-2.5 border-b border-border/40 bg-background flex flex-row items-center justify-between shrink-0">
@@ -124,6 +201,65 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                     </div>
                 </div>
             </DialogContent>
+
         </Dialog>
+
+            {paletteOpen && createPortal(
+                <div
+                    className="fixed inset-0 z-[9999] flex items-start justify-center pt-[20vh]"
+                    onClick={() => setPaletteOpen(false)}
+                    onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Escape') setPaletteOpen(false);
+                    }}
+                >
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+                    <div
+                        className="relative w-full max-w-lg bg-background border border-border rounded-xl shadow-2xl overflow-hidden"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <input
+                                ref={paletteInputRef}
+                                type="text"
+                                value={paletteQuery}
+                                onChange={e => setPaletteQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                    e.stopPropagation();
+                                    handlePaletteKeyDown(e);
+                                }}
+                                placeholder="Type a command..."
+                                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+                                autoFocus
+                            />
+                            <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/40">ESC</kbd>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto py-1">
+                            {filteredActions.length === 0 && (
+                                <p className="text-sm text-muted-foreground text-center py-6">No matching commands</p>
+                            )}
+                            {filteredActions.map((action, idx) => {
+                                const Icon = action.icon;
+                                return (
+                                    <button
+                                        key={action.id}
+                                        onClick={() => executePaletteAction(action)}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                                            idx === paletteIndex ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted/50'
+                                        }`}
+                                    >
+                                        <Icon className="w-4 h-4 shrink-0" />
+                                        <span className="flex-1 text-left">{action.label}</span>
+                                        <span className="text-[10px] text-muted-foreground/50">{action.section}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+        </>
     );
 };

@@ -89,7 +89,7 @@ export const agentTools = {
             tags: z.array(z.string()).optional(),
         }),
         execute: async ({ projectId, title, content, kind, tags }: { projectId: string; title: string; content: string; kind: string; tags?: string[] }) => {
-            return await invokeCommand<KnowledgeNode>('create_knowledge_node', {
+            const newNode = await invokeCommand<KnowledgeNode>('create_knowledge_node', {
                 projectId,
                 title,
                 content,
@@ -97,6 +97,30 @@ export const agentTools = {
                 source: 'ai_agent',
                 tags: tags ?? [],
             });
+
+            // Auto-link: find existing nodes with the same kind and link them
+            try {
+                const relatedNodes = await invokeCommand<KnowledgeNode[]>('search_knowledge_nodes', {
+                    projectId,
+                    query: null,
+                    kind,
+                    status: 'active',
+                    limit: 10,
+                });
+                for (const existing of relatedNodes) {
+                    if (existing.id !== newNode.id) {
+                        await invokeCommand('create_knowledge_edge', {
+                            fromNode: newNode.id,
+                            toNode: existing.id,
+                            relation: 'related_to',
+                        });
+                    }
+                }
+            } catch {
+                // Auto-linking is best-effort; do not fail the node creation
+            }
+
+            return newNode;
         },
     },
     updateKnowledgeNode: {

@@ -211,6 +211,25 @@ impl KnowledgeRepository {
         Ok(edges)
     }
 
+    /// Find a node by exact title and source for a given project.
+    pub async fn find_node_by_title_and_source(
+        &self,
+        project_id: &str,
+        title: &str,
+        source: &str,
+    ) -> Result<Option<KnowledgeNode>> {
+        let node = sqlx::query_as::<_, KnowledgeNode>(
+            "SELECT id, project_id, title, content, kind, source, status, tags, created_at, updated_at \
+             FROM knowledge_nodes WHERE project_id = ? AND title = ? AND source = ? LIMIT 1"
+        )
+            .bind(project_id)
+            .bind(title)
+            .bind(source)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(node)
+    }
+
     pub async fn delete_edge(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM knowledge_edges WHERE id = ?")
             .bind(id)

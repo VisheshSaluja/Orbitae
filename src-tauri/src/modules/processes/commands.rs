@@ -9,6 +9,16 @@ pub async fn start_process(
     command: String,
     cwd: String
 ) -> Result<Process, String> {
+    if command.trim().is_empty() {
+        return Err("Command cannot be empty".to_string());
+    }
+    if cwd.trim().is_empty() {
+        return Err("Working directory cannot be empty".to_string());
+    }
+    let cwd_path = std::path::Path::new(&cwd);
+    if !cwd_path.exists() || !cwd_path.is_dir() {
+        return Err(format!("Working directory does not exist: {}", cwd));
+    }
     let service = ProcessService::new(state.inner().clone());
     service.start_process(window, command, cwd).map_err(|e| e.to_string())
 }

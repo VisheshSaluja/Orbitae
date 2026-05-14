@@ -309,18 +309,146 @@ impl DatabaseService {
 }
 
 fn validate_query(query: &str) -> Result<()> {
-    let trimmed = query.trim().to_uppercase();
-    let dangerous_prefixes = [
-        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
-        "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
-    ];
-    for prefix in &dangerous_prefixes {
-        if trimmed.starts_with(prefix) {
-            return Err(anyhow::anyhow!(
-                "Only SELECT queries are allowed. '{}' statements are blocked for safety.",
-                prefix
-            ));
+    let stripped = strip_sql_comments(query);
+    let normalized = stripped.trim();
+
+    if normalized.is_empty() {
+        return Err(anyhow::anyhow!("Query cannot be empty"));
+    }
+
+    // Block multiple statements (semicolons mid-query enable stacked injection)
+    let without_trailing = normalized.trim_end_matches(';').trim();
+    if without_trailing.contains(';') {
+        return Err(anyhow::anyhow!(
+            "Multiple statements are not allowed. Submit one query at a time."
+        ));
+    }
+
+    let upper = without_trailing.to_uppercase();
+    let allowed_prefixes = ["SELECT", "EXPLAIN", "SHOW", "DESCRIBE", "DESC", "PRAGMA", "WITH"];
+    let starts_with_allowed = allowed_prefixes.iter().any(|p| {
+        upper.starts_with(p) && upper[p.len()..].starts_with(|c: char| c.is_whitespace() || c == '(')
+    });
+
+    if !starts_with_allowed {
+        return Err(anyhow::anyhow!(
+            "Only read-only queries are allowed (SELECT, EXPLAIN, SHOW, DESCRIBE, WITH...SELECT)."
+        ));
+    }
+
+    // WITH CTEs must resolve to SELECT, not INSERT/UPDATE/DELETE
+    if upper.starts_with("WITH") {
+        let dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE"];
+        for keyword in &dangerous {
+            if upper.contains(keyword) {
+                let before_keyword = &upper[..upper.find(keyword).unwrap()];
+                let paren_depth: i32 = before_keyword.chars().map(|c| match c {
+                    '(' => 1, ')' => -1, _ => 0
+                }).sum();
+                // If keyword appears at top-level (not inside a subquery), block it
+                if paren_depth <= 0 {
+                    return Err(anyhow::anyhow!(
+                        "WITH expressions must resolve to SELECT. '{}' is not allowed.",
+                        keyword
+                    ));
+                }
+            }
         }
     }
+
     Ok(())
+}
+
+/// Strip SQL line comments (--) and block comments (/* */) to prevent validation bypass.
+fn strip_sql_comments(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let chars: Vec<char> = sql.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if i + 1 < len && chars[i] == '-' && chars[i + 1] == '-' {
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2; // skip */
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_select_queries() {
+        assert!(validate_query("SELECT * FROM users").is_ok());
+        assert!(validate_query("SELECT id, name FROM projects WHERE id = 1").is_ok());
+        assert!(validate_query("select count(*) from items;").is_ok());
+    }
+
+    #[test]
+    fn allows_explain_show_describe() {
+        assert!(validate_query("EXPLAIN SELECT 1").is_ok());
+        assert!(validate_query("SHOW TABLES").is_ok());
+        assert!(validate_query("DESCRIBE users").is_ok());
+        assert!(validate_query("PRAGMA table_info(users)").is_ok());
+    }
+
+    #[test]
+    fn blocks_destructive_statements() {
+        assert!(validate_query("INSERT INTO users VALUES (1)").is_err());
+        assert!(validate_query("UPDATE users SET name = 'x'").is_err());
+        assert!(validate_query("DELETE FROM users").is_err());
+        assert!(validate_query("DROP TABLE users").is_err());
+        assert!(validate_query("ALTER TABLE users ADD col INT").is_err());
+        assert!(validate_query("TRUNCATE users").is_err());
+        assert!(validate_query("CREATE TABLE evil (id INT)").is_err());
+    }
+
+    #[test]
+    fn blocks_multi_statement_injection() {
+        assert!(validate_query("SELECT 1; DROP TABLE users").is_err());
+        assert!(validate_query("SELECT 1; DELETE FROM users").is_err());
+    }
+
+    #[test]
+    fn blocks_comment_bypass() {
+        assert!(validate_query("-- comment\nDROP TABLE users").is_err());
+        assert!(validate_query("/* comment */ INSERT INTO users VALUES (1)").is_err());
+    }
+
+    #[test]
+    fn blocks_cte_with_destructive_action() {
+        assert!(validate_query("WITH x AS (SELECT 1) DELETE FROM users").is_err());
+        assert!(validate_query("WITH x AS (SELECT 1) INSERT INTO users VALUES (1)").is_err());
+    }
+
+    #[test]
+    fn allows_cte_with_select() {
+        assert!(validate_query("WITH cte AS (SELECT id FROM users) SELECT * FROM cte").is_ok());
+    }
+
+    #[test]
+    fn blocks_empty_query() {
+        assert!(validate_query("").is_err());
+        assert!(validate_query("   ").is_err());
+    }
+
+    #[test]
+    fn strips_sql_comments_correctly() {
+        assert_eq!(strip_sql_comments("SELECT -- comment\n1"), "SELECT \n1");
+        assert_eq!(strip_sql_comments("SELECT /* block */ 1"), "SELECT  1");
+        assert_eq!(strip_sql_comments("/* start */DROP TABLE x"), "DROP TABLE x");
+    }
 }

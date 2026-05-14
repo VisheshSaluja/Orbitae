@@ -19,8 +19,8 @@ export const WhiteboardEditor: React.FC<WhiteboardEditorProps> = ({ initialData,
         }
     }, []);
 
-    // Use 'any' for elements initially to allow flexibility if types mismatch
-    const [elements, setElements] = useState<readonly Record<string, unknown>[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [elements, setElements] = useState<readonly any[]>([]);
     
     useEffect(() => {
         if (initialData) {
@@ -35,7 +35,8 @@ export const WhiteboardEditor: React.FC<WhiteboardEditorProps> = ({ initialData,
         }
     }, [initialData]);
 
-    const handleChange = (elements: readonly Record<string, unknown>[]) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleChange = (elements: readonly any[]) => {
         if (onChange) {
             const data = JSON.stringify(elements);
             onChange(data);

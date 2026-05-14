@@ -1,7 +1,7 @@
 # Orbitae — Development Roadmap
 
-> Last updated: 2026-05-05
-> Status: Pre-development. Planning complete.
+> Last updated: 2026-05-11
+> Status: Alpha development in progress.
 
 ---
 
@@ -9,16 +9,16 @@
 *Goal: A product a solo developer would pay $15/month for*
 
 ### P1.1 — Security & Code Quality Hardening
-- [ ] Fix SQL injection in `execute_query` — parameterize or validate queries
+- [x] Fix SQL injection in `execute_query` — allowlist-based validation, comment stripping, multi-statement blocking
 - [ ] Move DB connection passwords to Vault (out of plaintext JSON)
-- [ ] Remove `unsafe-eval` and `unsafe-inline` from Tauri CSP
-- [ ] Validate all file paths against project sandbox
-- [ ] Replace all `println!()` with `tracing` crate structured logging
+- [x] Harden Tauri CSP — added frame-src/object-src 'none', font-src restriction, Groq API endpoint
+- [x] Validate all file paths against project sandbox — path traversal checks on open_in_editor, reveal_in_finder, save_note_image
+- [x] Replace all `println!()` with `tracing` crate structured logging
 - [ ] Remove all `any` types from TypeScript — define proper interfaces
-- [ ] Add React Error Boundaries around all workspace panels
-- [ ] Add input validation on all Tauri command parameters
+- [x] Add React Error Boundaries around all workspace panels
+- [x] Add input validation on all Tauri command parameters — process, URL, file, query commands
 - [ ] Fix `write_to_process` disabled command (trait bounds issue)
-- [ ] Implement custom error types per Rust module (replace String errors)
+- [x] Implement custom error types per Rust module — shared AppError with thiserror, knowledge module migrated
 
 ### P1.2 — AI Agent Hub (Priority #1)
 - [x] Multi-provider LLM support: OpenAI, Anthropic, Groq, local Ollama
@@ -35,7 +35,7 @@
 - [x] **Knowledge Graph AI Tools:** `search_knowledge`, `create_knowledge_node`, `update_knowledge_node`, `link_nodes`
 - [x] **Context Builder v2:** Graph-aware context injection — query relevant nodes instead of dumping raw data
 - [x] **Auto-ingest (basic):** Auto-ingest README.md, CONTRIBUTING.md, ARCHITECTURE.md, docs/ into graph nodes
-- [ ] **Knowledge Graph UI:** Cytoscape.js graph visualization (deferred — node list implemented first)
+- [x] **Knowledge Graph UI:** Force-directed graph visualization (react-force-graph-2d, hover highlighting, click detail panel, graph/list toggle)
 
 ### P1.3 — MCP Server (Priority #2)
 - [x] Implement MCP server protocol in Rust (rmcp v1.6, JSON-RPC over stdio)
@@ -81,19 +81,19 @@
 - [x] Collapsible sidebar with icon-only mode
 - [x] Active tab highlight with primary color accent border
 - [x] **Agent-first simplification:** Collapse 10 tabs → 4 views (Command Center, Agent, Workspace, Settings)
-- [x] **Command Center panel:** Merge Overview + Launchpad + Processes into single cockpit view
+- [x] **Command Center panel:** Jarvis-style minimal cockpit — greeting hero, pill quick-actions, collapsible accordion sections
 - [x] **Workspace panel:** Merge Notes + Snippets + Knowledge Graph with internal tab switching
 - [x] **Settings panel:** Merge Keys & Secrets + Database connections + AI provider config
 - [x] Remove Git and Scripts as standalone tabs (agent handles, surfaced contextually)
-- [ ] Keyboard shortcuts for sidebar navigation (Cmd+1–4)
+- [x] Keyboard shortcuts for sidebar navigation (Cmd+1–4)
 
 ### P1.7 — Polish & Distribution
 - [ ] Apple Developer Certificate + code signing
 - [ ] Homebrew formula
 - [ ] Auto-updater (Tauri built-in)
 - [ ] Onboarding flow for new users (first project setup wizard)
-- [ ] Keyboard shortcuts for all major actions
-- [ ] Command palette (Cmd+K) for quick navigation
+- [x] Keyboard shortcuts for all major actions (Cmd+1–4 nav, Cmd+K palette)
+- [x] Command palette (Cmd+K) for quick navigation — search, arrow keys, enter to execute
 - [ ] Dark/light theme toggle (currently dark-only)
 - [ ] Performance profiling and optimization
 - [ ] Landing page update to reflect new positioning

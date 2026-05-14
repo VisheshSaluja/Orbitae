@@ -37,8 +37,7 @@ export class AgentEngine {
             provider: createOpenAI({
                 apiKey: key,
                 baseURL,
-                compatibility: (config.provider === 'anthropic' || config.provider === 'ollama') ? 'compatible' : 'strict',
-            }),
+            } as Parameters<typeof createOpenAI>[0]),
             model: config.model,
             supportsTools,
         };
@@ -116,7 +115,7 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
                 model: this.providerInstance.provider.chat(this.providerInstance.model),
                 system: systemPrompt,
                 messages,
-                ...(useTools ? { tools: agentTools as Record<string, unknown>, maxSteps: 10 } : {}),
+                ...(useTools ? { tools: agentTools as never, maxSteps: 10 } : {}),
                 onStepFinish: ({ toolCalls, toolResults }) => {
                     if (toolCalls && toolCalls.length > 0) {
                         for (const call of toolCalls) {
@@ -167,7 +166,7 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
                 model: this.providerInstance.provider.chat(this.providerInstance.model),
                 system: systemPrompt,
                 messages,
-                ...(useTools ? { tools: agentTools as Record<string, unknown>, maxSteps: 10 } : {}),
+                ...(useTools ? { tools: agentTools as never, maxSteps: 10 } : {}),
                 onStepFinish: ({ toolCalls, toolResults }) => {
                     if (toolCalls && toolCalls.length > 0) {
                         for (const call of toolCalls) {
@@ -177,7 +176,7 @@ Available edge relations: depends_on, related_to, contradicts, supersedes, imple
                     if (toolResults && toolResults.length > 0) {
                         for (const res of toolResults) {
                             onToolResult(res.toolName);
-                            collectedToolResults.push({ toolName: res.toolName, result: res.result });
+                            collectedToolResults.push({ toolName: res.toolName, result: (res as Record<string, unknown>).result });
                         }
                     }
                 },

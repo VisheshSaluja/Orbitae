@@ -271,6 +271,9 @@ pub async fn save_project_note_image(
     file_name: String,
     file_data: String,
 ) -> Result<String, String> {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return Err("Invalid file name — path separators are not allowed".to_string());
+    }
     let service = ProjectService::new(pool.inner().clone());
     service.save_note_image(&project_id, file_name, file_data)
         .await
@@ -317,6 +320,9 @@ pub async fn delete_project_link(
 
 #[command]
 pub async fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http:// and https:// URLs are allowed".to_string());
+    }
     open::that(url).map_err(|e| e.to_string())
 }
 
@@ -338,6 +344,13 @@ pub async fn get_git_history(path: String, limit: Option<usize>) -> Result<Vec<c
 
 #[command]
 pub async fn open_in_editor(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    if path.contains("..") {
+        return Err("Path traversal is not allowed".to_string());
+    }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("code")
@@ -368,6 +381,13 @@ pub async fn open_in_editor(path: String) -> Result<(), String> {
 
 #[command]
 pub async fn reveal_in_finder(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    if path.contains("..") {
+        return Err("Path traversal is not allowed".to_string());
+    }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")

@@ -130,6 +130,7 @@ pub fn run() {
         modules::knowledge::commands::build_knowledge_context,
         modules::knowledge::commands::ingest_knowledge_file,
         modules::knowledge::commands::auto_ingest_project_docs,
+        modules::knowledge::commands::scan_project_codebase,
         // AI Agent Hub
         modules::ai::commands::get_ai_providers,
         modules::ai::commands::save_ai_provider_config,
