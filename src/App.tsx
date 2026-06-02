@@ -96,7 +96,7 @@ function App() {
     }
   };
 
-  const handleBrowse = async (setter: (val: string) => void) => {
+  const handleBrowse = async (setter: (val: string) => void, nameSetter?: (val: string) => void, currentName?: string) => {
       try {
           const selected = await open({
               directory: true,
@@ -104,6 +104,13 @@ function App() {
           });
           if (selected) {
               setter(selected as string);
+              // Auto-populate name from folder basename when name is empty
+              if (nameSetter && !currentName?.trim()) {
+                  const basename = (selected as string).split('/').pop() ?? '';
+                  if (basename) {
+                      nameSetter(basename);
+                  }
+              }
           }
       } catch (e) {
           console.error(e);
@@ -273,13 +280,19 @@ function App() {
                     <div className="space-y-2">
                         <Label>Absolute System Path</Label>
                         <div className="flex gap-2">
-                            <Input 
-                                placeholder="/Users/username/projects/my-app" 
-                                value={importPath} 
-                                onChange={(e) => setImportPath(e.target.value)} 
+                            <Input
+                                placeholder="/Users/username/projects/my-app"
+                                value={importPath}
+                                onChange={(e) => setImportPath(e.target.value)}
+                                onBlur={() => {
+                                    if (!importName.trim() && importPath.trim()) {
+                                        const basename = importPath.trim().replace(/\/+$/, '').split('/').pop() ?? '';
+                                        if (basename) setImportName(basename);
+                                    }
+                                }}
                                 className="font-mono text-xs"
                             />
-                            <Button variant="outline" size="icon" onClick={() => handleBrowse(setImportPath)}>
+                            <Button variant="outline" size="icon" onClick={() => handleBrowse(setImportPath, setImportName, importName)}>
                                 <Folder className="w-4 h-4" />
                             </Button>
                         </div>

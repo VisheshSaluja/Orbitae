@@ -57,7 +57,7 @@ export async function generatePlaybookYaml(
 
     let scripts: ProjectScript[] = [];
     try {
-        scripts = await invokeCommand<ProjectScript[]>('get_project_scripts', { projectPath });
+        scripts = await invokeCommand<ProjectScript[]>('get_project_scripts', { path: projectPath });
     } catch {
         // no scripts found
     }

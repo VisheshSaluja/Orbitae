@@ -363,8 +363,16 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
 
     const handleEngineStop = useCallback(() => {
         const fg = graphRef.current;
-        if (fg) fg.zoomToFit(400, 60);
+        if (fg) fg.zoomToFit(400, 50);
     }, []);
+
+    // Whenever graph data changes (nodes loaded), schedule a zoomToFit after simulation settles
+    useEffect(() => {
+        if (graphData.nodes.length === 0) return;
+        const t1 = setTimeout(() => graphRef.current?.zoomToFit(300, 50), 800);
+        const t2 = setTimeout(() => graphRef.current?.zoomToFit(300, 50), 2000);
+        return () => { clearTimeout(t1); clearTimeout(t2); };
+    }, [graphData]);
 
     return (
         <div className="h-full flex flex-col bg-background">
@@ -454,7 +462,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ projectId, proje
                                 {/* Force-directed graph — fills all available space */}
                                 <div ref={graphContainerRef} className="flex-1 w-full h-full min-h-0 min-w-0 relative">
                                     {graphDimensions && <ForceGraph2D
-                                        ref={graphRef as React.MutableRefObject<ForceGraphMethods<NodeObject<GraphNode>, LinkObject<GraphNode, GraphLink>> | undefined>}
+                                        ref={graphRef as React.RefObject<ForceGraphMethods<NodeObject<GraphNode>, LinkObject<GraphNode, GraphLink>> | undefined>}
                                         width={graphDimensions.width}
                                         height={graphDimensions.height}
                                         graphData={graphData}
