@@ -35,18 +35,17 @@ impl McpService {
     }
 
     /// Returns the path to the orbitae-mcp binary.
+    ///
+    /// Checks the same directory as the running executable first (works for both
+    /// production bundles and `cargo build` output). Returns the expected path
+    /// even if the binary doesn't exist yet, so the client config can be
+    /// generated before a build completes.
     pub fn binary_path() -> Result<String> {
         let current_exe = std::env::current_exe()?;
         let bin_dir = current_exe.parent().unwrap_or(current_exe.as_path());
         let mcp_bin = bin_dir.join("orbitae-mcp");
 
-        if mcp_bin.exists() {
-            Ok(mcp_bin.to_string_lossy().to_string())
-        } else {
-            // During development, check the cargo target directory
-            let dev_bin = bin_dir.join("orbitae-mcp");
-            Ok(dev_bin.to_string_lossy().to_string())
-        }
+        Ok(mcp_bin.to_string_lossy().to_string())
     }
 
     /// Generates the MCP client config JSON for Claude Code / Cursor.

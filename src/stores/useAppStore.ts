@@ -29,8 +29,8 @@ export const useAppStore = create<AppState>((set) => ({
         try {
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
-        } catch (e) {
-            console.error('Failed to fetch projects', e);
+        } catch {
+            // Failed to fetch projects — silent, UI shows stale data
         } finally {
             set({ isLoading: false });
         }
@@ -40,8 +40,8 @@ export const useAppStore = create<AppState>((set) => ({
         try {
             const hosts = await invokeCommand<SshHostModel[]>('get_ssh_hosts');
             set({ hosts });
-        } catch (e) {
-            console.error('Failed to fetch hosts', e);
+        } catch {
+            // Failed to fetch hosts — non-critical
         }
     },
 
@@ -57,7 +57,6 @@ export const useAppStore = create<AppState>((set) => ({
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
         } catch (e) {
-            console.error('Failed to create project', e);
             throw e;
         } finally {
             set({ isLoading: false });
@@ -71,7 +70,6 @@ export const useAppStore = create<AppState>((set) => ({
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
         } catch (e) {
-            console.error('Failed to update project', e);
             throw e;
         } finally {
             set({ isLoading: false });
@@ -85,7 +83,6 @@ export const useAppStore = create<AppState>((set) => ({
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
         } catch (e) {
-            console.error('Failed to delete project', e);
             throw e;
         } finally {
             set({ isLoading: false });
@@ -99,8 +96,8 @@ export const useAppStore = create<AppState>((set) => ({
             // Silent refresh
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
-        } catch (e) {
-            console.error("Failed to update notes", e);
+        } catch {
+            // Failed to update notes — silent
         }
     },
 
@@ -109,8 +106,8 @@ export const useAppStore = create<AppState>((set) => ({
             await invokeCommand('update_project_settings', { id, settings });
             const projects = await invokeCommand<Project[]>('list_projects');
             set({ projects });
-        } catch (e) {
-            console.error("Failed to update settings", e);
+        } catch {
+            // Failed to update settings — silent
         }
     },
 

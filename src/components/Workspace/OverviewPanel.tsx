@@ -45,7 +45,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
     useEffect(() => {
         invokeCommand<ProjectNote[]>('get_project_notes', { projectId: project.id })
             .then(setNotes)
-            .catch(console.error);
+            .catch(() => { /* Failed to load notes — non-critical for overview */ });
         
         loadGitStatus();
         loadProcesses();
@@ -59,7 +59,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
         setIsGitLoading(true);
         invokeCommand<GitStatus | null>('get_git_status', { path: project.path })
             .then(setGitStatus)
-            .catch(err => console.error("Git status failed", err))
+            .catch(() => { /* Git status failed — non-critical */ })
             .finally(() => setIsGitLoading(false));
     };
 
@@ -69,8 +69,8 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
             setProcesses(data.filter(p => p.running)); // Only show running ones or filtered by active state? Backend usually returns all tracked.
             // Actually get_active_processes might return active ones? Or all? Let's assume all tracked.
             // But we want to show "Running Processes".
-        } catch (e) {
-            console.error("Failed to load processes", e);
+        } catch {
+            // Failed to load processes — non-critical for overview
         }
     };
 
@@ -95,8 +95,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
     const handleLaunchTerminal = async () => {
         try {
             await invokeCommand('open_external_terminal', { path: project.path });
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to launch terminal");
         }
     };
@@ -105,8 +104,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
         try {
             await invokeCommand('open_in_editor', { path: project.path });
             toast.success("Opening Editor...");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to open editor");
         }
     };
@@ -114,8 +112,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({ project, onNavigat
     const handleReveal = async () => {
         try {
             await invokeCommand('reveal_in_finder', { path: project.path });
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to reveal directory");
         }
     };

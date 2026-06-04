@@ -47,8 +47,8 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
             const data = await invokeCommand<ProjectLink[]>('get_project_links', { projectId });
             const normalized = data.map(d => ({ ...d, kind: d.kind || 'url' }));
             setLinks(normalized);
-        } catch (e) {
-            console.error(e);
+        } catch {
+            // Failed to load links — non-critical
         }
     };
 
@@ -81,8 +81,7 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
             setIsCreating(false);
             loadLinks();
             toast.success("Item added to Launchpad");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to add item");
         }
     };
@@ -93,8 +92,7 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
             await invokeCommand('delete_project_link', { id });
             loadLinks();
             toast.success("Removed");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to remove");
         }
     };
@@ -115,8 +113,7 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
                 const validUrl = ensureProtocol(link.url);
                 await invokeCommand('open_url', { url: validUrl });
             }
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to launch");
         }
     };
@@ -148,8 +145,7 @@ export const LaunchpadPanel: React.FC<LaunchpadPanelProps> = ({ projectId, proje
             if (successCount > 0) {
                 toast.success(`Launched ${successCount} items`);
             }
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Launch sequence interrupted");
         }
     };

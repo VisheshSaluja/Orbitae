@@ -30,8 +30,7 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
         try {
             const data = await invokeCommand<ProjectKey[]>('get_project_keys', { projectId });
             setKeys(data);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to load keys");
         } finally {
             setIsLoading(false);
@@ -56,8 +55,7 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
             setNewSecret('');
             setIsAddOpen(false);
             fetchKeys();
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to add key");
         }
     };
@@ -67,8 +65,7 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
             await invokeCommand('delete_project_key', { id, keyReference });
             toast.success("Key deleted");
             fetchKeys();
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to delete key");
         }
     };
@@ -77,17 +74,14 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
         const toastId = toast.loading("Authenticating...");
         try {
             // Backend will handle TouchID now
-            console.log("Requesting secret for:", keyReference);
             const secret = await invokeCommand<string>('reveal_secret', { keyReference });
-            console.log("Secret received");
             toast.dismiss(toastId);
             
             setRevealedSecret(secret);
             setRevealedSecretName(name);
             
-        } catch (e) {
+        } catch {
             toast.dismiss(toastId);
-            console.error("Reveal failed:", e);
             toast.error("Authentication failed or cancelled");
         }
     };

@@ -27,8 +27,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({ path }) => {
             ]);
             setCommits(historyData);
             setStatus(statusData);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to load git data");
         } finally {
             setLoading(false);
@@ -161,8 +160,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({ path }) => {
 };
 
 class ErrorBoundary extends React.Component<{ onError: () => void, children: React.ReactNode }> {
-    componentDidCatch(error: Error, _errorInfo: React.ErrorInfo) {
-        console.error("GitGraph Error:", error);
+    componentDidCatch(_error: Error, _errorInfo: React.ErrorInfo) {
         this.props.onError();
     }
     render() { return this.props.children; }

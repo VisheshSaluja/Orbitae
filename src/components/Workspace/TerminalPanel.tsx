@@ -57,14 +57,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectId, initial
 
     // Handle Input
     term.onData(async (data) => {
-      console.log('TERM DATA', JSON.stringify(data));
       if (sessionIdRef.current) {
-        await invokeCommand('write_to_shell', { 
-          sessionId: sessionIdRef.current, 
-          data 
+        await invokeCommand('write_to_shell', {
+          sessionId: sessionIdRef.current,
+          data
         });
-      } else {
-        console.warn('TERM DATA: No session ID');
       }
     });
 
@@ -76,9 +73,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectId, initial
             if (sessionIdRef.current) {
                 const { cols, rows } = xtermRef.current;
                 invokeCommand('resize_shell', { sessionId: sessionIdRef.current, cols, rows })
-                    .catch(console.error);
+                    .catch(() => { /* resize failed — non-critical */ });
             }
-        } catch (e) { console.error(e); }
+        } catch { /* fit failed — non-critical */ }
     });
     resizeObserver.observe(terminalRef.current);
 

@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 use super::models::{KnowledgeNode, KnowledgeEdge, KnowledgeLogEntry, NodeWithEdges};
 use super::service::KnowledgeService;
 use crate::shared::error::AppError;
+use crate::shared::validation::{validate_name, validate_content};
 
 #[command]
 pub async fn create_knowledge_node(
@@ -14,9 +15,8 @@ pub async fn create_knowledge_node(
     source: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<KnowledgeNode, AppError> {
-    if title.trim().is_empty() {
-        return Err(AppError::Validation("Node title cannot be empty".to_string()));
-    }
+    validate_name(&title, "Node title")?;
+    validate_content(&content, "Node content")?;
     let service = KnowledgeService::new(pool.inner().clone());
     service.create_node(&project_id, &title, &content, &kind, source.as_deref(), tags)
         .await

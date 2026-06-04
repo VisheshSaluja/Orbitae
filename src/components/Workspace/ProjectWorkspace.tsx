@@ -1,13 +1,13 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CommandCenterPanel } from './CommandCenterPanel';
 import { AgentPanel } from './AgentPanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { SettingsPanel } from './SettingsPanel';
+import { TerminalTab } from './TerminalTab';
 import type { Project } from '../../types';
 import {
-    FolderOpen, PanelLeftClose, PanelLeft,
-    Rocket, Bot, ScrollText, Settings, Search,
+    ChevronLeft, FolderOpen, PanelLeftClose, PanelLeft,
+    Rocket, Bot, Terminal, ScrollText, Settings, Search,
     type LucideIcon,
 } from 'lucide-react';
 import { ErrorBoundary } from '../ui/error-boundary';
@@ -22,6 +22,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
     { id: 'command-center', label: 'Command Center', icon: Rocket, description: 'Project cockpit' },
     { id: 'agent', label: 'Agent', icon: Bot, description: 'AI assistant' },
+    { id: 'terminal', label: 'Terminal', icon: Terminal, description: 'Shell access' },
     { id: 'workspace', label: 'Workspace', icon: ScrollText, description: 'Notes & knowledge' },
     { id: 'settings', label: 'Settings', icon: Settings, description: 'Configuration' },
 ];
@@ -54,6 +55,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     const commandActions: CommandAction[] = useMemo(() => [
         { id: 'nav-command-center', label: 'Go to Command Center', icon: Rocket, section: 'Navigation', action: () => setActiveTab('command-center') },
         { id: 'nav-agent', label: 'Go to Agent', icon: Bot, section: 'Navigation', action: () => setActiveTab('agent') },
+        { id: 'nav-terminal', label: 'Go to Terminal', icon: Terminal, section: 'Navigation', action: () => setActiveTab('terminal') },
         { id: 'nav-workspace', label: 'Go to Workspace', icon: ScrollText, section: 'Navigation', action: () => setActiveTab('workspace') },
         { id: 'nav-settings', label: 'Go to Settings', icon: Settings, section: 'Navigation', action: () => setActiveTab('settings') },
         { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: PanelLeft, section: 'View', action: () => setSidebarCollapsed(p => !p) },
@@ -77,7 +79,11 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                 setPaletteOpen(prev => !prev);
                 setPaletteQuery('');
             }
-            if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '4') {
+            if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+                e.preventDefault();
+                setActiveTab('terminal');
+            }
+            if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '5') {
                 e.preventDefault();
                 const idx = parseInt(e.key) - 1;
                 if (NAV_ITEMS[idx]) setActiveTab(NAV_ITEMS[idx].id);
@@ -120,6 +126,8 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                 return <CommandCenterPanel project={project} onNavigate={handleNavigate} />;
             case 'agent':
                 return <AgentPanel projectId={project.id} project={project} onNavigate={handleNavigate} />;
+            case 'terminal':
+                return <TerminalTab projectId={project.id} projectPath={project.path} />;
             case 'workspace':
                 return <WorkspacePanel projectId={project.id} projectPath={project.path} />;
             case 'settings':
@@ -130,76 +138,83 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     }, [activeTab, project, handleNavigate]);
 
     return (
-        <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-[95vw] md:max-w-7xl h-[90vh] flex flex-col p-0 gap-0 border-border bg-background overflow-hidden shadow-2xl">
-                <DialogHeader className="px-4 py-2.5 border-b border-border/40 bg-background flex flex-row items-center justify-between shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="flex gap-1.5 mr-2">
-                            <div className="w-3 h-3 rounded-full bg-red-500/20 border border-red-500/40 hover:bg-red-500/60 transition-colors cursor-pointer" onClick={onClose} />
-                            <div className="w-3 h-3 rounded-full bg-yellow-500/20 border border-yellow-500/40" />
-                            <div className="w-3 h-3 rounded-full bg-green-500/20 border border-green-500/40" />
-                        </div>
-                        <DialogTitle className="text-sm font-medium flex items-center gap-2 text-foreground/90">
-                            <FolderOpen className="w-4 h-4 text-primary" />
-                            {project.name}
-                        </DialogTitle>
-                        <DialogDescription className="hidden">Project Workspace</DialogDescription>
-                    </div>
-                </DialogHeader>
-
-                <div className="flex-1 overflow-hidden flex flex-row">
-                    {/* Sidebar */}
-                    <nav className={`${sidebarCollapsed ? 'w-14' : 'w-52'} shrink-0 border-r border-border/30 bg-muted/5 flex flex-col transition-all duration-200`}>
-                        <div className="flex-1 py-3 px-2 space-y-1">
-                            {NAV_ITEMS.map((item) => {
-                                const Icon = item.icon;
-                                const isActive = activeTab === item.id;
-                                return (
-                                    <button
-                                        key={item.id}
-                                        onClick={() => setActiveTab(item.id)}
-                                        title={sidebarCollapsed ? item.label : undefined}
-                                        className={`w-full flex items-center gap-3 rounded-lg text-xs font-medium transition-all duration-150 ${
-                                            sidebarCollapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'
-                                        } ${
-                                            isActive
-                                                ? 'bg-primary/10 text-primary shadow-sm shadow-primary/5'
-                                                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                                        }`}
-                                    >
-                                        <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : ''}`} />
-                                        {!sidebarCollapsed && (
-                                            <div className="text-left min-w-0">
-                                                <div className={`text-[13px] leading-tight ${isActive ? 'font-semibold' : 'font-medium'}`}>
-                                                    {item.label}
-                                                </div>
-                                                <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-                                                    {item.description}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        <button
-                            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                            className="p-3 border-t border-border/30 text-muted-foreground/40 hover:text-muted-foreground transition-colors flex items-center justify-center"
-                            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                        >
-                            {sidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-                        </button>
-                    </nav>
-
-                    {/* Panel */}
-                    <div className="flex-1 overflow-hidden bg-background relative">
-                        <ErrorBoundary key={activeTab}>
-                            {panelContent}
-                        </ErrorBoundary>
-                    </div>
+        <div className="flex flex-col h-screen bg-background">
+            {/* Title bar — breadcrumb navigation */}
+            <header className="h-11 shrink-0 border-b border-border/40 bg-background flex items-center justify-between px-4 select-none">
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={onClose}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        Projects
+                    </button>
+                    <span className="text-border/60">/</span>
+                    <span className="text-sm font-medium flex items-center gap-2 text-foreground/90">
+                        <FolderOpen className="w-4 h-4 text-primary" />
+                        {project.name}
+                    </span>
                 </div>
-            </DialogContent>
+                <div className="flex items-center gap-2">
+                    <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/40">
+                        {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}K
+                    </kbd>
+                </div>
+            </header>
 
+            <div className="flex-1 overflow-hidden flex flex-row">
+                {/* Sidebar */}
+                <nav className={`${sidebarCollapsed ? 'w-14' : 'w-52'} shrink-0 border-r border-border/30 bg-muted/5 flex flex-col transition-all duration-200`}>
+                    <div className="flex-1 py-3 px-2 space-y-1">
+                        {NAV_ITEMS.map((item) => {
+                            const Icon = item.icon;
+                            const isActive = activeTab === item.id;
+                            return (
+                                <button
+                                    key={item.id}
+                                    onClick={() => setActiveTab(item.id)}
+                                    title={sidebarCollapsed ? item.label : undefined}
+                                    className={`w-full flex items-center gap-3 rounded-lg text-xs font-medium transition-all duration-150 ${
+                                        sidebarCollapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'
+                                    } ${
+                                        isActive
+                                            ? 'bg-primary/10 text-primary shadow-sm shadow-primary/5'
+                                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                                    }`}
+                                >
+                                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : ''}`} />
+                                    {!sidebarCollapsed && (
+                                        <div className="text-left min-w-0">
+                                            <div className={`text-[13px] leading-tight ${isActive ? 'font-semibold' : 'font-medium'}`}>
+                                                {item.label}
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+                                                {item.description}
+                                            </div>
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <button
+                        onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                        className="p-3 border-t border-border/30 text-muted-foreground/40 hover:text-muted-foreground transition-colors flex items-center justify-center"
+                        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    >
+                        {sidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+                    </button>
+                </nav>
+
+                {/* Panel */}
+                <div className="flex-1 overflow-hidden bg-background relative">
+                    <ErrorBoundary key={activeTab}>
+                        {panelContent}
+                    </ErrorBoundary>
+                </div>
+            </div>
+
+            {/* Command palette — fixed overlay */}
             {paletteOpen && (
                 <div
                     className="fixed inset-0 z-[9999] flex items-start justify-center pt-[20vh]"
@@ -255,6 +270,6 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                     </div>
                 </div>
             )}
-        </Dialog>
+        </div>
     );
 };

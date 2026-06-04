@@ -77,8 +77,6 @@ function App() {
   const [isCloning, setIsCloning] = useState(false);
 
   const handleNewProject = async (mode: 'create' | 'import' | 'clone' = 'create') => {
-    console.log(`Starting project flow: ${mode}`);
-    
     if (mode === 'create') {
         const name = `Project ${projects.length + 1}`;
         const path = `~/projects/${name.toLowerCase().replace(' ', '-')}`;
@@ -112,8 +110,8 @@ function App() {
                   }
               }
           }
-      } catch (e) {
-          console.error(e);
+      } catch {
+          // Dialog open failed — non-critical
       }
   };
 
@@ -127,9 +125,8 @@ function App() {
         await createProject(importName, importPath);
         toast.success("Project imported");
         setIsImportOpen(false);
-    } catch (e) {
+    } catch {
         toast.error("Failed to import project");
-        console.error(e);
     }
   };
 
@@ -159,8 +156,7 @@ function App() {
           await createProject(cloneName, fullPath);
           toast.success("Repository cloned and project created");
           setIsCloneOpen(false);
-      } catch (e) {
-          console.error(e);
+      } catch {
           toast.error("Failed to clone repository");
       } finally {
           setIsCloning(false);
@@ -169,96 +165,99 @@ function App() {
 
   return (
     <>
-        <AppLayout 
-            onNewProject={handleNewProject}
-        >
-            {projects.length > 0 ? (
-              <div className="space-y-6">
-                  {/* Toolbar */}
-                  <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-                      <div className="relative w-full sm:w-72">
-                          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                          <Input 
-                            placeholder="Search projects..." 
-                            className="pl-9" 
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                          />
-                      </div>
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                          <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                  <Button variant="outline" size="sm" className="ml-auto sm:ml-0 gap-2">
-                                      <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground" />
-                                      <span className="hidden sm:inline">Sort:</span>
-                                      <span className="font-medium">
-                                          {sortBy === 'created_desc' && 'Newest'}
-                                          {sortBy === 'created_asc' && 'Oldest'}
-                                          {sortBy === 'updated_desc' && 'Recently Updated'}
-                                          {sortBy === 'name_asc' && 'Name'}
-                                      </span>
-                                  </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => setSortBy('created_desc')}>
-                                      <Calendar className="w-4 h-4 mr-2" /> Newest Created
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => setSortBy('created_asc')}>
-                                      <Calendar className="w-4 h-4 mr-2" /> Oldest Created
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => setSortBy('updated_desc')}>
-                                      <Clock className="w-4 h-4 mr-2" /> Recently Updated
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => setSortBy('name_asc')}>
-                                      <span className="ml-6">Name (A-Z)</span>
-                                  </DropdownMenuItem>
-                              </DropdownMenuContent>
-                          </DropdownMenu>
-                      </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-                    {filteredProjects.map(project => (
-                      <ProjectCard 
-                        key={project.id} 
-                        project={project} 
-                        onLaunch={handleLaunch} 
-                      />
-                    ))}
-                    
-                    {filteredProjects.length === 0 && (
-                        <div className="col-span-full py-12 text-center text-muted-foreground">
-                            <p>No projects match your search.</p>
-                            <Button variant="link" onClick={() => setSearchQuery('')}>Clear Search</Button>
-                        </div>
-                    )}
-                  </div>
-              </div>
-            ) : (
-                <div className="flex flex-col items-center justify-center p-20 text-center border-2 border-dashed border-border/40 rounded-xl bg-muted/5 min-h-[400px]">
-                    <div className="p-4 rounded-full bg-accent mb-6 shadow-xl">
-                         <Plus className="w-10 h-10 text-primary" />
-                    </div>
-                    <h3 className="text-xl font-bold tracking-tight text-foreground">Welcome to Orbitae</h3>
-                    <p className="text-muted-foreground mt-2 mb-8 max-w-sm">
-                        Create your first developer workspace to manage secrets, environments, and terminals.
-                    </p>
-                    <Button onClick={() => handleNewProject('create')} size="lg" className="shadow-lg shadow-blue-500/20">
-                        Create Workspace
-                    </Button>
-                </div>
-            )}
-        </AppLayout>
-        
-        {activeTerminalProject && (
-            <ProjectWorkspace 
+        {activeTerminalProject ? (
+            <ProjectWorkspace
                 project={projects.find(p => p.id === activeTerminalProject)!}
-                onClose={() => setActiveTerminalProject(null)} 
+                onClose={() => {
+                    setActiveTerminalProject(null);
+                    fetchProjects();
+                }}
             />
+        ) : (
+            <AppLayout
+                onNewProject={handleNewProject}
+            >
+                {projects.length > 0 ? (
+                  <div className="space-y-6">
+                      {/* Toolbar */}
+                      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                          <div className="relative w-full sm:w-72">
+                              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="Search projects..."
+                                className="pl-9"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                              />
+                          </div>
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                              <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                      <Button variant="outline" size="sm" className="ml-auto sm:ml-0 gap-2">
+                                          <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground" />
+                                          <span className="hidden sm:inline">Sort:</span>
+                                          <span className="font-medium">
+                                              {sortBy === 'created_desc' && 'Newest'}
+                                              {sortBy === 'created_asc' && 'Oldest'}
+                                              {sortBy === 'updated_desc' && 'Recently Updated'}
+                                              {sortBy === 'name_asc' && 'Name'}
+                                          </span>
+                                      </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                      <DropdownMenuItem onClick={() => setSortBy('created_desc')}>
+                                          <Calendar className="w-4 h-4 mr-2" /> Newest Created
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => setSortBy('created_asc')}>
+                                          <Calendar className="w-4 h-4 mr-2" /> Oldest Created
+                                      </DropdownMenuItem>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem onClick={() => setSortBy('updated_desc')}>
+                                          <Clock className="w-4 h-4 mr-2" /> Recently Updated
+                                      </DropdownMenuItem>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem onClick={() => setSortBy('name_asc')}>
+                                          <span className="ml-6">Name (A-Z)</span>
+                                      </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                              </DropdownMenu>
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+                        {filteredProjects.map(project => (
+                          <ProjectCard
+                            key={project.id}
+                            project={project}
+                            onLaunch={handleLaunch}
+                          />
+                        ))}
+
+                        {filteredProjects.length === 0 && (
+                            <div className="col-span-full py-12 text-center text-muted-foreground">
+                                <p>No projects match your search.</p>
+                                <Button variant="link" onClick={() => setSearchQuery('')}>Clear Search</Button>
+                            </div>
+                        )}
+                      </div>
+                  </div>
+                ) : (
+                    <div className="flex flex-col items-center justify-center p-20 text-center border-2 border-dashed border-border/40 rounded-xl bg-muted/5 min-h-[400px]">
+                        <div className="p-4 rounded-full bg-accent mb-6 shadow-xl">
+                             <Plus className="w-10 h-10 text-primary" />
+                        </div>
+                        <h3 className="text-xl font-bold tracking-tight text-foreground">Welcome to Orbitae</h3>
+                        <p className="text-muted-foreground mt-2 mb-8 max-w-sm">
+                            Create your first developer workspace to manage secrets, environments, and terminals.
+                        </p>
+                        <Button onClick={() => handleNewProject('create')} size="lg" className="shadow-lg shadow-blue-500/20">
+                            Create Workspace
+                        </Button>
+                    </div>
+                )}
+            </AppLayout>
         )}
-        
+
         {/* Import Dialog */}
         <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
             <DialogContent>

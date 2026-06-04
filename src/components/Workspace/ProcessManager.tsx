@@ -23,8 +23,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
         // Fetch active processes
         invokeCommand<Process[]>('get_active_processes')
             .then(setProcesses)
-            .catch(err => {
-                console.error("Failed to fetch active processes:", err);
+            .catch(() => {
                 toast.error("Failed to restore process list");
             });
 
@@ -36,8 +35,8 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
         try {
             const data = await invokeCommand<Snippet[]>('get_project_snippets', { projectId });
             setSnippets(data);
-        } catch (e) {
-            console.error("Failed to fetch saved commands:", e);
+        } catch {
+            // Failed to fetch saved commands — non-critical
         }
     };
 
@@ -54,8 +53,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
             });
             toast.success("Command saved!");
             fetchSnippets();
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to save command");
         }
     };
@@ -66,8 +64,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
             await invokeCommand('delete_snippet', { id });
             toast.success("Command deleted");
             fetchSnippets();
-        } catch (err) {
-            console.error(err);
+        } catch {
             toast.error("Failed to delete command");
         }
     };
@@ -86,8 +83,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ projectId, path 
             setSelectedId(process.id);
             if (!cmdOverride) setNewCommand('');
             toast.success("Process started");
-        } catch (err) {
-            console.error(err);
+        } catch {
             toast.error("Failed to start process");
         }
     };

@@ -164,7 +164,10 @@ impl OrbitaeMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
             .ok_or_else(|| ErrorData::invalid_params("Database connection not found", None))?;
 
-        let result = db_service.execute_query(&connection.kind, &connection.details, &params.query, None).await
+        // Resolve password from vault using connection_id (mirrors main app behavior)
+        let password = app_lib::modules::databases::service::DatabaseService::get_password(&params.connection_id);
+
+        let result = db_service.execute_query(&connection.kind, &connection.details, &params.query, password.as_deref()).await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(

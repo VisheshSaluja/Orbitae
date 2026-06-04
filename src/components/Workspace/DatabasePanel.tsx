@@ -55,8 +55,7 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
         try {
             const data = await invokeCommand<ProjectConnection[]>('get_connections', { projectId });
             setConnections(data);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to load connections");
         } finally {
             setIsLoading(false);
@@ -88,12 +87,13 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
         if (newKind === 'sqlite') {
             return JSON.stringify({ file_path: filePath });
         }
+        // Password is intentionally excluded — it is sent as a separate parameter
+        // and stored in the OS keychain via the vault, never in the SQLite details blob.
         return JSON.stringify({
             host,
             port: parseInt(port),
             username,
             database,
-            password 
         });
     };
     
@@ -109,7 +109,6 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
             setTestStatus('success');
             toast.success("Connection successful");
         } catch (e) {
-            console.error(e);
             setTestStatus('error');
             toast.error("Connection failed: " + e);
         }
@@ -117,15 +116,16 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
 
     const handleSubmit = async () => {
         if (!newName) return toast.error("Name required");
-        
+
         try {
             await invokeCommand('create_connection', {
                 projectId,
                 name: newName,
                 kind: newKind,
-                details: getDetailsJson()
+                details: getDetailsJson(),
+                password: newKind === 'sqlite' ? null : (password || null),
             });
-            
+
             toast.success("Connection saved");
             setIsCreateOpen(false);
             fetchConnections();
@@ -156,11 +156,10 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
             const data = await invokeCommand<{name: string, schema: string | null}[]>('get_tables', {
                 kind: conn.kind,
                 details: conn.details,
-                password: null // TODO: Handle password
+                connectionId: conn.id,
             });
             setTables(data);
-        } catch (e) {
-            console.error("Failed to fetch tables", e);
+        } catch {
             toast.error("Could not load table schema");
         } finally {
             setIsLoadingTables(false);
@@ -195,13 +194,12 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
                 kind: activeConnection.kind,
                 details: activeConnection.details,
                 query: sqlQuery,
-                password: null // Ideally passed from vault or prompt
+                connectionId: activeConnection.id,
             });
             setQueryResult(res);
             toast.success("Query executed");
         } catch (e: unknown) {
             const message = e instanceof Error ? e.message : String(e);
-            console.error(e);
             toast.error("Query failed: " + message);
         } finally {
             setIsExecuting(false);
@@ -451,7 +449,7 @@ export const DatabasePanel: React.FC<DatabasePanelProps> = ({ projectId }) => {
                                         <Label>Password</Label>
                                         <Input type="password" value={password} onChange={e => setPassword(e.target.value)} />
                                         <p className="text-[10px] text-muted-foreground mt-1">
-                                            Stored as plain text (MVP only)
+                                            Stored securely in OS keychain
                                         </p>
                                     </div>
                                 </div>

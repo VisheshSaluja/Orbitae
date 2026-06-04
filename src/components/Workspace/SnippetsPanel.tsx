@@ -26,8 +26,8 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ projectId, onRun }
         try {
             const data = await invokeCommand<Snippet[]>('get_project_snippets', { projectId });
             setSnippets(data);
-        } catch (e) {
-            console.error(e);
+        } catch {
+            // Failed to load snippets — non-critical
         }
     };
 
@@ -45,8 +45,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ projectId, onRun }
             setIsCreating(false);
             loadSnippets();
             toast.success("Snippet saved");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to save snippet");
         }
     };
@@ -56,8 +55,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ projectId, onRun }
             await invokeCommand('delete_snippet', { id });
             toast.success("Snippet deleted");
             loadSnippets();
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to delete snippet");
         }
     };

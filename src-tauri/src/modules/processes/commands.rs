@@ -1,6 +1,7 @@
 use tauri::{command, State, Window};
 use super::models::{Process, ProcessState};
 use super::service::ProcessService;
+use crate::shared::validation::validate_shell_command;
 
 #[command]
 pub async fn start_process(
@@ -9,9 +10,7 @@ pub async fn start_process(
     command: String,
     cwd: String
 ) -> Result<Process, String> {
-    if command.trim().is_empty() {
-        return Err("Command cannot be empty".to_string());
-    }
+    validate_shell_command(&command).map_err(|e| e.to_string())?;
     if cwd.trim().is_empty() {
         return Err("Working directory cannot be empty".to_string());
     }

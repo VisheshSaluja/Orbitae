@@ -19,8 +19,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("ReadmeGenerator Error:", error, errorInfo);
+  componentDidCatch(_error: Error, _errorInfo: ErrorInfo) {
+    // Error boundary caught an error — state already updated via getDerivedStateFromError
   }
 
   render() {
@@ -57,8 +57,8 @@ const ReadmeGeneratorContent = () => {
                     setDownloadProgress(event.payload);
                 });
                 unlisten = unlistenFn;
-             } catch (err) {
-                 console.error("Failed to setup listener:", err);
+             } catch {
+                 // Failed to setup listener — non-critical
              }
         };
 
@@ -74,8 +74,8 @@ const ReadmeGeneratorContent = () => {
         try {
             const status = await invokeCommand<{ present: boolean, progress: number }>('check_model_status');
             setModelStatus(status);
-        } catch (e) {
-            console.error("Check model failed:", e);
+        } catch {
+            // Model check failed — UI will show download screen
         }
     };
 

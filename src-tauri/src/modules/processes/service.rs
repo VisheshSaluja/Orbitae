@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::thread;
 use anyhow::{Result, anyhow};
 use uuid::Uuid;
-use super::models::{Process, ProcessSession, ProcessState};
+use super::models::{OutputBuffer, Process, ProcessSession, ProcessState};
 
 pub struct ProcessService {
     state: ProcessState,
@@ -51,7 +51,7 @@ impl ProcessService {
         let process_id = id.clone();
         let window_clone = window.clone();
         
-        let history = Arc::new(Mutex::new(String::new()));
+        let history = Arc::new(Mutex::new(OutputBuffer::new()));
         let history_clone = history.clone();
 
         thread::spawn(move || {
@@ -62,7 +62,7 @@ impl ProcessService {
                         let data = String::from_utf8_lossy(&buf[..n]).to_string();
                         // Append to history
                         if let Ok(mut lock) = history_clone.lock() {
-                            lock.push_str(&data);
+                            lock.push(&data);
                         }
                         
                         // Emit event to frontend
@@ -140,7 +140,7 @@ impl ProcessService {
         let state = self.state.lock().map_err(|_| anyhow!("Failed to acquire process lock"))?;
         if let Some(session) = state.get(id) {
              let history = session.history.lock().map_err(|_| anyhow!("Failed to acquire history lock"))?;
-             Ok(history.clone())
+             Ok(history.contents())
         } else {
             Err(anyhow!("Process not found"))
         }

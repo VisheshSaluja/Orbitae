@@ -39,8 +39,8 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
             const data = await invokeCommand<ProjectLink[]>('get_project_links', { projectId });
             const normalized = data.map(d => ({ ...d, kind: d.kind || 'url' }));
             setLinks(normalized);
-        } catch (e) {
-            console.error(e);
+        } catch {
+            // Failed to load links — non-critical
         }
     };
 
@@ -73,8 +73,7 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
             setIsCreating(false);
             loadLinks();
             toast.success("Item added");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to add item");
         }
     };
@@ -85,8 +84,7 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
             await invokeCommand('delete_project_link', { id });
             loadLinks();
             toast.success("Removed");
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to remove");
         }
     };
@@ -107,8 +105,7 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
                 const validUrl = ensureProtocol(link.url);
                 await invokeCommand('open_url', { url: validUrl });
             }
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to launch");
         }
     };
@@ -137,8 +134,7 @@ export const LinksPanel: React.FC<LinksPanelProps> = ({ projectId, projectPath }
                 }
             }
             toast.success(`Launched ${successCount} items`);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to launch all items");
         }
     };

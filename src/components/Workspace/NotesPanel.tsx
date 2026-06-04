@@ -82,8 +82,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
             // Normalize kind if missing (for old notes)
             const normalized = data.map(n => ({...n, kind: n.kind || 'text'}));
             setNotes(normalized);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to load notes");
         } finally {
             setIsLoading(false);
@@ -141,8 +140,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
                 setIsEditorOpen(false); 
             }
             fetchNotes(); 
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to save note");
         }
     };
@@ -155,8 +153,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
             toast.success("Note deleted");
             setNoteToDelete(null);
             fetchNotes();
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to delete note");
         }
     };

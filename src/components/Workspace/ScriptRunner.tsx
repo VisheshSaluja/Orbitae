@@ -25,8 +25,7 @@ export const ScriptRunner: React.FC<ScriptRunnerProps> = ({ path, onNavigate }) 
         try {
             const data = await invokeCommand<ProjectScript[]>('get_project_scripts', { path });
             setScripts(data);
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error("Failed to load scripts");
         } finally {
             setLoading(false);
@@ -57,8 +56,7 @@ export const ScriptRunner: React.FC<ScriptRunnerProps> = ({ path, onNavigate }) 
             
             // Switch to processes tab to show output
             onNavigate('processes');
-        } catch (e) {
-            console.error(e);
+        } catch {
             toast.error(`Failed to run ${script.name}`);
         } finally {
             setRunningScript(null);

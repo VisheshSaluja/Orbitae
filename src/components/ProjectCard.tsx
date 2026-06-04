@@ -46,8 +46,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onLaunch }) =
           if (selected && typeof selected === 'string') {
               setEditPath(selected);
           }
-      } catch (err) {
-          console.error("Failed to open dialog:", err);
+      } catch {
+          // Dialog open failed — non-critical
       }
   };
 

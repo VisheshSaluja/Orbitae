@@ -29,8 +29,8 @@ export const WhiteboardEditor: React.FC<WhiteboardEditorProps> = ({ initialData,
                 if (Array.isArray(parsed)) {
                      setElements(parsed);
                 }
-            } catch (e) {
-                console.error("Failed to parse whiteboard data", e);
+            } catch {
+                // Failed to parse whiteboard data — use empty elements
             }
         }
     }, [initialData]);

@@ -41,8 +41,8 @@ export const ProjectTerminal: React.FC<ProjectTerminalProps> = ({ processId, onE
         requestAnimationFrame(() => {
             try {
                 fitAddon.fit();
-            } catch (e) {
-                console.warn("Fit failed:", e);
+            } catch {
+                // Fit failed — container may not have dimensions yet
             }
         });
 
@@ -54,11 +54,11 @@ export const ProjectTerminal: React.FC<ProjectTerminalProps> = ({ processId, onE
             .then(history => {
                 if (history) term.write(history);
             })
-            .catch(console.error);
+            .catch(() => { /* Failed to load process history — non-critical */ });
 
         // Handle Input
         term.onData((data) => {
-            invokeCommand('write_to_process', { id: processId, data }).catch(console.error);
+            invokeCommand('write_to_process', { id: processId, data }).catch(() => { /* write failed */ });
         });
 
         // Listen for output
@@ -81,7 +81,7 @@ export const ProjectTerminal: React.FC<ProjectTerminalProps> = ({ processId, onE
             if (fitAddonRef.current && terminalRef.current) {
                 fitAddonRef.current.fit();
                 const { cols, rows } = terminalRef.current;
-                invokeCommand('resize_process', { id: processId, cols, rows }).catch(console.error);
+                invokeCommand('resize_process', { id: processId, cols, rows }).catch(() => { /* resize failed */ });
             }
         };
 

@@ -2,6 +2,7 @@ use tauri::{command, State};
 use sqlx::SqlitePool;
 use super::models::{Project, ProjectEnv, Snippet};
 use super::service::ProjectService;
+use crate::shared::validation::{validate_name, validate_path};
 
 // Note: In Tauri, we usually inject the Pool state.
 // We need to decide if we inject the Service or the Pool and create Service on fly.
@@ -14,12 +15,8 @@ pub async fn create_project(
     path: String,
     ssh_key_path: Option<String>,
 ) -> Result<Project, String> {
-    if name.trim().is_empty() {
-        return Err("Project name cannot be empty".to_string());
-    }
-    if path.trim().is_empty() {
-        return Err("Project path cannot be empty".to_string());
-    }
+    validate_name(&name, "Project name").map_err(|e| e.to_string())?;
+    validate_path(&path).map_err(|e| e.to_string())?;
     let service = ProjectService::new(pool.inner().clone());
     service.create_project(name, path, ssh_key_path)
         .await
@@ -127,6 +124,8 @@ pub async fn update_project(
     path: String,
     ssh_key_path: Option<String>
 ) -> Result<(), String> {
+    validate_name(&name, "Project name").map_err(|e| e.to_string())?;
+    validate_path(&path).map_err(|e| e.to_string())?;
     let service = ProjectService::new(pool.inner().clone());
     service.update_project(&id, name, path, ssh_key_path)
         .await
