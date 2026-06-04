@@ -12,60 +12,65 @@ interface TerminalInstance {
     label: string;
 }
 
+let termCounter = 0;
+
+function createTerminal(): TerminalInstance {
+    termCounter += 1;
+    return { id: crypto.randomUUID(), label: `Terminal ${termCounter}` };
+}
+
 export const TerminalTab: React.FC<TerminalTabProps> = ({ projectId }) => {
-    const [terminals, setTerminals] = useState<TerminalInstance[]>([
-        { id: crypto.randomUUID(), label: 'Terminal 1' },
-    ]);
-    const [activeTerminalId, setActiveTerminalId] = useState(terminals[0].id);
-    const [splitMode, setSplitMode] = useState<'single' | 'split'>('single');
+    const [terminals, setTerminals] = useState<TerminalInstance[]>(() => {
+        termCounter = 0;
+        return [createTerminal()];
+    });
+    const [activeId, setActiveId] = useState(terminals[0].id);
+    const [split, setSplit] = useState(false);
 
     const addTerminal = useCallback(() => {
         if (terminals.length >= 4) return;
-        const newTerm: TerminalInstance = {
-            id: crypto.randomUUID(),
-            label: `Terminal ${terminals.length + 1}`,
-        };
-        setTerminals(prev => [...prev, newTerm]);
-        setActiveTerminalId(newTerm.id);
+        const t = createTerminal();
+        setTerminals(prev => [...prev, t]);
+        setActiveId(t.id);
     }, [terminals.length]);
 
     const removeTerminal = useCallback((id: string) => {
         setTerminals(prev => {
             const next = prev.filter(t => t.id !== id);
             if (next.length === 0) {
-                const fresh = { id: crypto.randomUUID(), label: 'Terminal 1' };
-                setActiveTerminalId(fresh.id);
+                termCounter = 0;
+                const fresh = createTerminal();
+                setActiveId(fresh.id);
                 return [fresh];
             }
-            if (activeTerminalId === id) {
-                setActiveTerminalId(next[0].id);
-            }
+            if (activeId === id) setActiveId(next[0].id);
             return next;
         });
-    }, [activeTerminalId]);
+    }, [activeId]);
 
-    const visibleTerminals = splitMode === 'split' ? terminals : terminals.filter(t => t.id === activeTerminalId);
+    const visible = split ? terminals : terminals.filter(t => t.id === activeId);
 
     return (
-        <div className="h-full flex flex-col bg-background">
-            {/* Terminal tab bar */}
-            <div className="shrink-0 flex items-center justify-between border-b border-border/40 bg-muted/5 px-2">
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
+            {/* Tab bar */}
+            <div className="shrink-0 flex items-center justify-between border-b border-border/40 bg-muted/5 px-2"
+                 style={{ minHeight: 36 }}>
                 <div className="flex items-center gap-0.5 overflow-x-auto py-1">
-                    {terminals.map(term => (
+                    {terminals.map(t => (
                         <button
-                            key={term.id}
-                            onClick={() => setActiveTerminalId(term.id)}
+                            key={t.id}
+                            onClick={() => setActiveId(t.id)}
                             className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                                activeTerminalId === term.id
+                                activeId === t.id
                                     ? 'bg-background text-foreground shadow-sm'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                         >
-                            {term.label}
+                            {t.label}
                             {terminals.length > 1 && (
                                 <X
                                     className="w-3 h-3 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
-                                    onClick={(e) => { e.stopPropagation(); removeTerminal(term.id); }}
+                                    onClick={(e) => { e.stopPropagation(); removeTerminal(t.id); }}
                                 />
                             )}
                         </button>
@@ -74,27 +79,32 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ projectId }) => {
                         <button
                             onClick={addTerminal}
                             className="p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors"
-                            title="New terminal"
+                            title="New terminal (max 4)"
                         >
                             <Plus className="w-3.5 h-3.5" />
                         </button>
                     )}
                 </div>
-                <div className="flex items-center gap-1 pr-1">
-                    <button
-                        onClick={() => setSplitMode(splitMode === 'single' ? 'split' : 'single')}
-                        className={`p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors ${splitMode === 'split' ? 'bg-muted text-foreground' : ''}`}
-                        title={splitMode === 'single' ? 'Split view' : 'Single view'}
-                    >
-                        {splitMode === 'single' ? <Columns2 className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
-                    </button>
-                </div>
+                <button
+                    onClick={() => setSplit(s => !s)}
+                    className={`p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors ${split ? 'bg-muted text-foreground' : ''}`}
+                    title={split ? 'Single view' : 'Split view'}
+                >
+                    {split ? <Square className="w-3.5 h-3.5" /> : <Columns2 className="w-3.5 h-3.5" />}
+                </button>
             </div>
 
-            {/* Terminal panes */}
-            <div className={`flex-1 min-h-0 ${splitMode === 'split' ? 'grid grid-cols-2 gap-px bg-border/40' : 'flex'}`}>
-                {visibleTerminals.map(term => (
-                    <div key={term.id} className="min-h-0 min-w-0 bg-background">
+            {/* Terminal panes — use inline styles for bulletproof sizing */}
+            <div style={{
+                flex: 1,
+                display: split ? 'grid' : 'flex',
+                gridTemplateColumns: split ? `repeat(${Math.min(visible.length, 2)}, 1fr)` : undefined,
+                gap: split ? 1 : 0,
+                minHeight: 0,
+                overflow: 'hidden',
+            }}>
+                {visible.map(t => (
+                    <div key={t.id} style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
                         <TerminalPanel projectId={projectId} />
                     </div>
                 ))}

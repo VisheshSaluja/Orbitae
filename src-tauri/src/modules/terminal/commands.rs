@@ -7,11 +7,14 @@ use crate::modules::projects::repository::ProjectRepository;
 #[command]
 pub async fn spawn_shell(
     app_handle: AppHandle,
-    state: State<'_, TerminalService>,
+    sessions: State<'_, TerminalSessions>,
+    pool: State<'_, SqlitePool>,
     project_id: String,
     initial_command: Option<String>,
 ) -> Result<String, String> {
-    state.spawn_shell(app_handle, project_id, initial_command)
+    let repo = ProjectRepository::new(pool.inner().clone());
+    let service = TerminalService::new(sessions.inner().clone(), repo);
+    service.spawn_shell(app_handle, project_id, initial_command)
         .await
         .map_err(|e| e.to_string())
 }

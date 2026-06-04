@@ -71,13 +71,15 @@ impl TerminalService {
         tracing::debug!("Spawning command: {:?}", cmd);
         let _child = pair.slave.spawn_command(cmd)?;
 
+        // Take the writer once and store it for the session's lifetime
+        let mut writer = pair.master.take_writer()?;
+
         // If we have an initial command (like ssh), write it immediately
         if let Some(cmd_str) = initial_command {
-            let mut writer = pair.master.take_writer()?;
-            let cmd_with_newline = format!("{}\r", cmd_str); // Add return
+            let cmd_with_newline = format!("{}\r", cmd_str);
             writer.write_all(cmd_with_newline.as_bytes())?;
         }
-        
+
         // Generate Session ID
         let session_id = Uuid::new_v4().to_string();
 
@@ -113,6 +115,7 @@ impl TerminalService {
         // Store Session
         let session = TerminalSession {
             pty_pair: pair,
+            writer,
             project_id: project_id.clone(),
         };
 
@@ -122,13 +125,12 @@ impl TerminalService {
     }
 
     pub fn write_to_shell(&self, session_id: &str, data: &str) -> Result<()> {
-        tracing::debug!("Writing {} bytes to session {}", data.len(), session_id);
         let mut sessions = self.sessions.lock().map_err(|_| anyhow::anyhow!("Failed to acquire session lock"))?;
         if let Some(session) = sessions.get_mut(session_id) {
-            let mut writer = session.pty_pair.master.take_writer()?;
-            writer.write_all(data.as_bytes())?;
+            session.writer.write_all(data.as_bytes())?;
+            session.writer.flush()?;
         } else {
-             tracing::error!("Session {} not found", session_id);
+            return Err(anyhow::anyhow!("Session not found: {}", session_id));
         }
         Ok(())
     }

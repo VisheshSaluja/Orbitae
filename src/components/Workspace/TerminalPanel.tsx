@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { listen } from '@tauri-apps/api/event';
@@ -6,117 +6,170 @@ import { invokeCommand } from '../../lib/tauri';
 import '@xterm/xterm/css/xterm.css';
 
 interface TerminalPanelProps {
-  projectId: string;
-  initialCommand?: string;
-  onSessionReady?: (sessionId: string) => void;
+    projectId: string;
+    initialCommand?: string;
+    onSessionReady?: (sessionId: string) => void;
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectId, initialCommand, onSessionReady }) => {
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const termRef = useRef<Terminal | null>(null);
+    const fitRef = useRef<FitAddon | null>(null);
+    const sessionRef = useRef<string | null>(null);
+    const initedRef = useRef(false);
 
-  useEffect(() => {
-    if (!terminalRef.current) return;
-    if (xtermRef.current) return;
-
-    // Helper to get CSS variable value
-    const getCssVar = (name: string) => {
-        const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-        return value ? `hsl(${value})` : undefined;
-    };
-
-    // Initialize Xterm
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: '"JetBrains Mono", Menlo, Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 1.2,
-      theme: {
-        background: getCssVar('--background') || '#09090b', 
-        foreground: getCssVar('--foreground') || '#fafafa', 
-        cursor: getCssVar('--primary') || '#3b82f6', 
-        selectionBackground: 'rgba(59, 130, 246, 0.3)',
-      },
-      allowProposedApi: true,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(terminalRef.current);
-    
-    // Fit after small delay
-    setTimeout(() => {
-         fitAddon.fit();
-         term.focus();
-    }, 50);
-
-    xtermRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // Handle Input
-    term.onData(async (data) => {
-      if (sessionIdRef.current) {
-        await invokeCommand('write_to_shell', {
-          sessionId: sessionIdRef.current,
-          data
-        });
-      }
-    });
-
-    // Resize Observer
-    const resizeObserver = new ResizeObserver(() => {
-        if (!xtermRef.current) return;
+    const doFit = useCallback(() => {
+        const fit = fitRef.current;
+        const term = termRef.current;
+        if (!fit || !term) return;
         try {
-            fitAddon.fit();
-            if (sessionIdRef.current) {
-                const { cols, rows } = xtermRef.current;
-                invokeCommand('resize_shell', { sessionId: sessionIdRef.current, cols, rows })
-                    .catch(() => { /* resize failed — non-critical */ });
+            fit.fit();
+            if (sessionRef.current) {
+                invokeCommand('resize_shell', {
+                    sessionId: sessionRef.current,
+                    cols: term.cols,
+                    rows: term.rows,
+                }).catch(() => {});
             }
-        } catch { /* fit failed — non-critical */ }
-    });
-    resizeObserver.observe(terminalRef.current);
+        } catch {
+            // fit can throw if container not visible
+        }
+    }, []);
 
-    // Connect to Backend
-    const initTerminal = async () => {
-        try {
-            term.writeln('\x1b[38;5;75m⚡ Orbitae Terminal connecting...\x1b[0m\r\n');
-            
-            const sessionId = await invokeCommand<string>('spawn_shell', { 
-                projectId,
-                initialCommand
-            });
-            sessionIdRef.current = sessionId;
-            onSessionReady?.(sessionId);
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el || initedRef.current) return;
 
-            const unlisten = await listen<{ session_id: string, data: string }>('terminal_data', (event) => {
-                if (event.payload.session_id === sessionId) {
-                    term.write(event.payload.data);
+        // Wait until the container has real dimensions before initializing xterm
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 50 || rect.height < 50) {
+            const observer = new ResizeObserver((entries) => {
+                const entry = entries[0];
+                if (entry && entry.contentRect.width >= 50 && entry.contentRect.height >= 50) {
+                    observer.disconnect();
+                    initTerminal(el);
                 }
             });
-            return unlisten;
-        } catch (err) {
-            term.writeln(`\r\n\x1b[31mConnection failed: ${err}\x1b[0m`);
-            return () => {};
+            observer.observe(el);
+            return () => observer.disconnect();
         }
-    };
 
-    let cleanupListen: (() => void) | undefined;
-    initTerminal().then(u => cleanupListen = u);
+        return initTerminal(el);
+    }, [projectId]);
 
-    return () => {
-        resizeObserver.disconnect();
-        cleanupListen?.();
-        term.dispose();
-        xtermRef.current = null;
-    };
-  }, [projectId]); // logic depends on projectId, initialCommand is generally stable but we can add it
+    function initTerminal(el: HTMLDivElement) {
+        if (initedRef.current) return;
+        initedRef.current = true;
 
-  return (
-    <div className="h-full w-full bg-[#18181b] p-1 relative rounded-md border border-zinc-800">
-        <div ref={terminalRef} className="absolute inset-2" />
-    </div>
-  );
+        const isDark = document.documentElement.classList.contains('dark');
+
+        const term = new Terminal({
+            cursorBlink: true,
+            cursorStyle: 'bar',
+            fontFamily: '"SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+            fontSize: 13,
+            lineHeight: 1.3,
+            scrollback: 5000,
+            theme: {
+                background: isDark ? '#12141a' : '#fafafa',
+                foreground: isDark ? '#d4d4d8' : '#18181b',
+                cursor: isDark ? '#60a5fa' : '#2563eb',
+                selectionBackground: isDark ? 'rgba(96, 165, 250, 0.3)' : 'rgba(37, 99, 235, 0.2)',
+                black: isDark ? '#27272a' : '#e4e4e7',
+                red: '#ef4444',
+                green: '#22c55e',
+                yellow: '#eab308',
+                blue: '#3b82f6',
+                magenta: '#a855f7',
+                cyan: '#06b6d4',
+                white: isDark ? '#e4e4e7' : '#27272a',
+                brightBlack: isDark ? '#52525b' : '#a1a1aa',
+                brightRed: '#f87171',
+                brightGreen: '#4ade80',
+                brightYellow: '#facc15',
+                brightBlue: '#60a5fa',
+                brightMagenta: '#c084fc',
+                brightCyan: '#22d3ee',
+                brightWhite: isDark ? '#fafafa' : '#09090b',
+            },
+            allowProposedApi: true,
+        });
+
+        const fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+
+        term.open(el);
+        termRef.current = term;
+        fitRef.current = fitAddon;
+
+        // Fit after a short delay to let the DOM settle
+        requestAnimationFrame(() => {
+            fitAddon.fit();
+            term.focus();
+        });
+
+        // Handle keyboard input → write to backend shell
+        const dataDisposable = term.onData((data) => {
+            if (sessionRef.current) {
+                invokeCommand('write_to_shell', {
+                    sessionId: sessionRef.current,
+                    data,
+                }).catch(() => {});
+            }
+        });
+
+        // Resize observer for responsive sizing
+        const resizeObserver = new ResizeObserver(() => {
+            requestAnimationFrame(() => doFit());
+        });
+        resizeObserver.observe(el);
+
+        // Connect to backend shell
+        let unlistenFn: (() => void) | undefined;
+
+        const connect = async () => {
+            try {
+                const sessionId = await invokeCommand<string>('spawn_shell', {
+                    projectId,
+                    initialCommand,
+                });
+                sessionRef.current = sessionId;
+                onSessionReady?.(sessionId);
+
+                // Fit again now that the shell is connected
+                doFit();
+
+                unlistenFn = await listen<{ session_id: string; data: string }>(
+                    'terminal_data',
+                    (event) => {
+                        if (event.payload.session_id === sessionId) {
+                            term.write(event.payload.data);
+                        }
+                    },
+                );
+            } catch (err) {
+                term.writeln(`\r\n\x1b[31mFailed to connect: ${err}\x1b[0m`);
+            }
+        };
+
+        connect();
+
+        return () => {
+            resizeObserver.disconnect();
+            dataDisposable.dispose();
+            unlistenFn?.();
+            term.dispose();
+            termRef.current = null;
+            fitRef.current = null;
+            initedRef.current = false;
+        };
+    }
+
+    return (
+        <div
+            ref={containerRef}
+            className="w-full h-full overflow-hidden"
+            style={{ padding: 4 }}
+        />
+    );
 };
