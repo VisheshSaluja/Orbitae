@@ -138,6 +138,102 @@ pub async fn get_project_context_preview(
         .map_err(|e| format!("Failed to build context: {}", e))
 }
 
+/// Bring Terminal.app to the foreground so the user can see running agents.
+#[command]
+pub async fn focus_agent_terminals() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(r#"tell application "Terminal" to activate"#)
+            .spawn()
+            .map_err(|e| format!("Failed to focus Terminal: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Get a summary of file changes in the project (git diff --stat + file list).
+#[command]
+pub async fn get_session_diff(
+    project_path: String,
+) -> Result<SessionDiff, String> {
+    let expanded = crate::shared::utils::expand_path(&project_path);
+
+    let stat_output = std::process::Command::new("git")
+        .args(["diff", "--stat", "HEAD"])
+        .current_dir(&expanded)
+        .output()
+        .map_err(|e| format!("git diff failed: {}", e))?;
+
+    let stat = if stat_output.status.success() {
+        String::from_utf8_lossy(&stat_output.stdout).trim().to_string()
+    } else {
+        String::new()
+    };
+
+    let files_output = std::process::Command::new("git")
+        .args(["diff", "--name-only", "HEAD"])
+        .current_dir(&expanded)
+        .output()
+        .map_err(|e| format!("git diff failed: {}", e))?;
+
+    let changed_files: Vec<String> = if files_output.status.success() {
+        String::from_utf8_lossy(&files_output.stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let numstat_output = std::process::Command::new("git")
+        .args(["diff", "--numstat", "HEAD"])
+        .current_dir(&expanded)
+        .output()
+        .map_err(|e| format!("git diff failed: {}", e))?;
+
+    let file_stats: Vec<FileDiffStat> = if numstat_output.status.success() {
+        String::from_utf8_lossy(&numstat_output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    Some(FileDiffStat {
+                        file: parts[2].to_string(),
+                        additions: parts[0].parse().unwrap_or(0),
+                        deletions: parts[1].parse().unwrap_or(0),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(SessionDiff {
+        stat_summary: stat,
+        changed_files,
+        file_stats,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct SessionDiff {
+    pub stat_summary: String,
+    pub changed_files: Vec<String>,
+    pub file_stats: Vec<FileDiffStat>,
+}
+
+#[derive(serde::Serialize)]
+pub struct FileDiffStat {
+    pub file: String,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
 /// Resolve the API key for a given agent type.
 async fn resolve_api_key(
     pool: &SqlitePool,

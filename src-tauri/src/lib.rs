@@ -121,6 +121,8 @@ pub fn run() {
         modules::agent_sessions::commands::list_agent_sessions,
         modules::agent_sessions::commands::stop_agent_session,
         modules::agent_sessions::commands::get_project_context_preview,
+        modules::agent_sessions::commands::focus_agent_terminals,
+        modules::agent_sessions::commands::get_session_diff,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
