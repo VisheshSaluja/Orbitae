@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
     Play, Square, Bot, Zap, Monitor, ExternalLink,
     Plus, RefreshCw, Clock, FileCode, GitBranch,
-    ChevronRight, X, Eye,
+    X, Eye,
 } from 'lucide-react';
 
 interface AgentSession {
@@ -35,9 +35,9 @@ interface SessionsTabProps {
 }
 
 const AGENT_TYPES = [
-    { id: 'claude', label: 'Claude Code', icon: Bot, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/30', dot: 'bg-orange-400' },
-    { id: 'codex', label: 'Codex CLI', icon: Zap, color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/30', dot: 'bg-green-400' },
-    { id: 'custom', label: 'Terminal', icon: Monitor, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30', dot: 'bg-blue-400' },
+    { id: 'claude', label: 'Claude Code', icon: Bot, accent: 'bg-orange-500', accentMuted: 'bg-orange-500/15', accentText: 'text-orange-400' },
+    { id: 'codex', label: 'Codex CLI', icon: Zap, accent: 'bg-emerald-500', accentMuted: 'bg-emerald-500/15', accentText: 'text-emerald-400' },
+    { id: 'custom', label: 'Terminal', icon: Monitor, accent: 'bg-sky-500', accentMuted: 'bg-sky-500/15', accentText: 'text-sky-400' },
 ] as const;
 
 const getAgentConfig = (type: string) => AGENT_TYPES.find(a => a.id === type) ?? AGENT_TYPES[2];
@@ -126,6 +126,24 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
+    const handleCloseTab = async (sessionId: string) => {
+        try {
+            const session = sessions.find(s => s.id === sessionId);
+            if (session?.status === 'running') {
+                await invokeCommand('stop_agent_session', { sessionId });
+            }
+        } catch {
+            // still remove from list even if stop fails
+        }
+        setSessions(prev => {
+            const remaining = prev.filter(s => s.id !== sessionId);
+            if (selectedSessionId === sessionId) {
+                setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
+            }
+            return remaining;
+        });
+    };
+
     const handleFocus = async () => {
         try {
             await invokeCommand('focus_agent_terminals');
@@ -142,7 +160,6 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
-    const runningSessions = sessions.filter(s => s.status === 'running');
     const selectedSession = sessions.find(s => s.id === selectedSessionId);
     const totalAdditions = diff?.file_stats.reduce((sum, f) => sum + f.additions, 0) ?? 0;
     const totalDeletions = diff?.file_stats.reduce((sum, f) => sum + f.deletions, 0) ?? 0;
@@ -151,16 +168,16 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     if (sessions.length === 0 && !showLauncher) {
         return (
             <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/[0.06] flex items-center justify-center mb-5">
-                    <Bot className="w-7 h-7 text-blue-400" />
+                <div className="w-14 h-14 rounded-2xl bg-foreground/6 flex items-center justify-center mb-5">
+                    <Bot className="w-6 h-6 text-muted-foreground" />
                 </div>
-                <h3 className="text-[15px] font-semibold text-[#e4e4e7] mb-1.5">Launch AI Agents</h3>
-                <p className="text-[12px] text-[#71717a] max-w-xs mb-6 leading-relaxed">
-                    Spawn Claude Code, Codex, or custom terminal sessions that run in native windows. Each agent gets your project context automatically.
+                <h3 className="text-sm font-semibold text-foreground mb-1.5">Launch AI Agents</h3>
+                <p className="text-[12px] text-muted-foreground max-w-xs mb-6 leading-relaxed">
+                    Spawn Claude Code, Codex, or custom terminal sessions that run in native windows with your project context.
                 </p>
                 <button
                     onClick={() => setShowLauncher(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[13px] font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors duration-150 shadow-lg shadow-blue-500/20"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150"
                 >
                     <Plus className="w-4 h-4" />
                     New Session
@@ -171,44 +188,44 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
 
     return (
         <div className="h-full flex flex-col">
-            {/* Session tab bar — Superset-inspired */}
-            <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-white/[0.06] bg-[#0e0e11] overflow-x-auto">
+            {/* Session strip — horizontal tabs */}
+            <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-border overflow-x-auto hide-scrollbar">
                 {sessions.map(session => {
                     const config = getAgentConfig(session.agent_type);
-                    const Icon = config.icon;
                     const isSelected = session.id === selectedSessionId;
                     const isRunning = session.status === 'running';
                     return (
                         <button
                             key={session.id}
                             onClick={() => setSelectedSessionId(session.id)}
-                            className={`group shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-150 ${
+                            className={`group shrink-0 flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md text-[12px] font-medium transition-all duration-100 ${
                                 isSelected
-                                    ? `${config.bg} ${config.color} border ${config.border}`
-                                    : 'text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04] border border-transparent'
+                                    ? 'bg-foreground/8 text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-foreground/4'
                             }`}
                         >
-                            <Icon className="w-3.5 h-3.5" />
+                            {/* Agent-colored dot */}
+                            <span className="relative flex items-center justify-center w-4 h-4 shrink-0">
+                                {isRunning && (
+                                    <span className={`absolute w-3 h-3 rounded-full ${config.accent} opacity-20 animate-ping`} />
+                                )}
+                                <span className={`relative w-1.5 h-1.5 rounded-full ${isRunning ? config.accent : 'bg-muted-foreground/30'}`} />
+                            </span>
                             <span>{session.display_name}</span>
-                            {isRunning && (
-                                <span className={`w-1.5 h-1.5 rounded-full ${config.dot} animate-pulse`} />
-                            )}
-                            {!isRunning && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#52525b]" />
-                            )}
                             <button
-                                onClick={(e) => { e.stopPropagation(); handleStop(session.id); }}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
-                                title="Stop"
+                                onClick={(e) => { e.stopPropagation(); handleCloseTab(session.id); }}
+                                className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-foreground/10 text-muted-foreground hover:text-foreground transition-all"
+                                title="Close"
                             >
                                 <X className="w-3 h-3" />
                             </button>
                         </button>
                     );
                 })}
+
                 <button
                     onClick={() => setShowLauncher(!showLauncher)}
-                    className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-[#52525b] hover:text-[#a1a1aa] hover:bg-white/[0.04] transition-colors"
+                    className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-foreground/4 transition-colors"
                     title="New session"
                 >
                     <Plus className="w-3.5 h-3.5" />
@@ -218,19 +235,19 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
 
                 <button
                     onClick={loadSessions}
-                    className="shrink-0 p-1.5 rounded-md text-[#52525b] hover:text-[#a1a1aa] hover:bg-white/[0.04] transition-colors"
+                    className="shrink-0 p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-foreground/4 transition-colors"
                     title="Refresh"
                 >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <RefreshCw className="w-3 h-3" />
                 </button>
             </div>
 
-            {/* Launch panel (slides in) */}
+            {/* Launch panel */}
             {showLauncher && (
-                <div className="shrink-0 border-b border-white/[0.06] bg-[#111114] p-4 space-y-3">
+                <div className="shrink-0 border-b border-border bg-card p-4 space-y-3">
                     <div className="flex items-center justify-between">
-                        <span className="text-[12px] font-semibold text-[#a1a1aa] uppercase tracking-wider">Launch Agent</span>
-                        <button onClick={() => setShowLauncher(false)} className="p-1 rounded hover:bg-white/[0.06] text-[#52525b]">
+                        <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Launch Agent</span>
+                        <button onClick={() => setShowLauncher(false)} className="p-1 rounded hover:bg-foreground/6 text-muted-foreground">
                             <X className="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -241,10 +258,10 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 <button
                                     key={agent.id}
                                     onClick={() => setSelectedAgent(agent.id)}
-                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium border transition-all duration-150 ${
+                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
                                         selectedAgent === agent.id
-                                            ? `${agent.bg} ${agent.color} ${agent.border}`
-                                            : 'border-white/[0.06] text-[#71717a] hover:border-white/[0.12] hover:text-[#a1a1aa]'
+                                            ? `${agent.accentMuted} ${agent.accentText}`
+                                            : 'bg-foreground/4 text-muted-foreground hover:text-foreground'
                                     }`}
                                 >
                                     <Icon className="w-3.5 h-3.5" />
@@ -255,16 +272,16 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     </div>
                     <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-[#71717a]">Count:</span>
+                            <span className="text-[11px] text-muted-foreground">Count:</span>
                             <div className="flex gap-1">
                                 {[1, 2, 3, 4, 5, 6].map(n => (
                                     <button
                                         key={n}
                                         onClick={() => setAgentCount(n)}
-                                        className={`w-7 h-7 rounded-md text-[11px] font-medium transition-all ${
+                                        className={`w-7 h-7 rounded-md text-[11px] font-medium tabular-nums transition-all ${
                                             agentCount === n
-                                                ? 'bg-blue-600 text-white'
-                                                : 'bg-white/[0.04] text-[#71717a] hover:bg-white/[0.08] hover:text-[#a1a1aa]'
+                                                ? 'bg-foreground text-background'
+                                                : 'bg-foreground/4 text-muted-foreground hover:bg-foreground/8 hover:text-foreground'
                                         }`}
                                     >
                                         {n}
@@ -277,15 +294,15 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 type="checkbox"
                                 checked={injectContext}
                                 onChange={e => setInjectContext(e.target.checked)}
-                                className="rounded border-[#52525b] accent-blue-500 w-3.5 h-3.5"
+                                className="rounded border-border accent-foreground w-3.5 h-3.5"
                             />
-                            <span className="text-[11px] text-[#71717a]">Inject context</span>
+                            <span className="text-[11px] text-muted-foreground">Inject context</span>
                         </label>
                     </div>
                     <button
                         onClick={handleLaunch}
                         disabled={isLaunching}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors duration-150 disabled:opacity-50 shadow-lg shadow-blue-500/10"
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150 disabled:opacity-50"
                     >
                         {isLaunching ? 'Launching...' : (
                             <><Play className="w-3.5 h-3.5" /> Launch {agentCount} {getAgentConfig(selectedAgent).label} Session{agentCount > 1 ? 's' : ''}</>
@@ -294,68 +311,64 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                 </div>
             )}
 
-            {/* Main content: selected session detail + diff panel */}
+            {/* Main content area */}
             <div className="flex-1 flex min-h-0">
-                {/* Left: Session detail */}
-                <div className="flex-1 min-w-0 overflow-y-auto p-5">
+                {/* Session detail */}
+                <div className="flex-1 min-w-0 overflow-y-auto p-6">
                     {selectedSession ? (
-                        <div className="space-y-5">
-                            {/* Session info card */}
-                            <div className="rounded-xl border border-white/[0.06] bg-[#111114] p-5">
-                                <div className="flex items-start justify-between mb-4">
+                        <div className="max-w-2xl mx-auto space-y-5">
+                            {/* Session header card */}
+                            <div className="rounded-lg border border-border bg-card p-5">
+                                <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-3">
-                                        <div className={`p-2.5 rounded-xl ${getAgentConfig(selectedSession.agent_type).bg}`}>
+                                        <div className={`w-10 h-10 rounded-lg ${getAgentConfig(selectedSession.agent_type).accentMuted} flex items-center justify-center`}>
                                             {React.createElement(getAgentConfig(selectedSession.agent_type).icon, {
-                                                className: `w-5 h-5 ${getAgentConfig(selectedSession.agent_type).color}`
+                                                className: `w-5 h-5 ${getAgentConfig(selectedSession.agent_type).accentText}`
                                             })}
                                         </div>
                                         <div>
-                                            <h3 className="text-[14px] font-semibold text-[#e4e4e7]">{selectedSession.display_name}</h3>
-                                            <span className="text-[11px] text-[#71717a]">{getAgentConfig(selectedSession.agent_type).label}</span>
+                                            <h3 className="text-sm font-semibold text-foreground">{selectedSession.display_name}</h3>
+                                            <span className="text-[11px] text-muted-foreground">{getAgentConfig(selectedSession.agent_type).label}</span>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-1.5">
-                                        {selectedSession.status === 'running' ? (
-                                            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-medium">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                                Running
-                                            </span>
-                                        ) : (
-                                            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-white/[0.04] text-[#71717a] text-[10px] font-medium">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-[#52525b]" />
-                                                Stopped
-                                            </span>
-                                        )}
-                                    </div>
+                                    {selectedSession.status === 'running' ? (
+                                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-medium">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                            Running
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-foreground/4 text-muted-foreground text-[10px] font-medium">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                                            Stopped
+                                        </span>
+                                    )}
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-3 text-[12px]">
-                                    <div className="flex items-center gap-2 text-[#71717a]">
+                                <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
+                                    <div className="flex items-center gap-1.5">
                                         <Clock className="w-3.5 h-3.5" />
                                         <span>{formatElapsed(selectedSession.created_at)}</span>
                                     </div>
                                     {selectedSession.pid && (
-                                        <div className="flex items-center gap-2 text-[#71717a]">
-                                            <span className="font-mono text-[11px]">PID {selectedSession.pid}</span>
-                                        </div>
+                                        <span className="font-mono text-[11px]">Window #{selectedSession.pid}</span>
                                     )}
                                 </div>
                             </div>
 
-                            {/* Action buttons */}
-                            <div className="flex items-center gap-2">
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 flex-wrap">
                                 {selectedSession.status === 'running' && (
                                     <>
                                         <button
                                             onClick={handleFocus}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium bg-white/[0.06] hover:bg-white/[0.1] text-[#e4e4e7] border border-white/[0.06] transition-all duration-150"
+                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-all duration-150"
                                         >
                                             <Eye className="w-3.5 h-3.5" />
-                                            Focus Window
+                                            Open Terminal
                                         </button>
                                         <button
                                             onClick={() => handleStop(selectedSession.id)}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-red-400 hover:bg-red-500/10 border border-white/[0.06] hover:border-red-500/20 transition-all duration-150"
+                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-destructive hover:bg-destructive/10 border border-border hover:border-destructive/20 transition-all duration-150"
                                         >
                                             <Square className="w-3.5 h-3.5" />
                                             Stop
@@ -364,64 +377,35 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 )}
                                 <button
                                     onClick={handleOpenEditor}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-[#a1a1aa] hover:bg-white/[0.06] border border-white/[0.06] transition-all duration-150"
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 border border-border transition-all duration-150"
                                 >
                                     <ExternalLink className="w-3.5 h-3.5" />
                                     Open in Editor
                                 </button>
                             </div>
-
-                            {/* Running sessions summary */}
-                            {runningSessions.length > 1 && (
-                                <div className="rounded-xl border border-white/[0.06] bg-[#111114] p-4">
-                                    <h4 className="text-[11px] font-semibold text-[#71717a] uppercase tracking-wider mb-3">All Active Sessions</h4>
-                                    <div className="space-y-2">
-                                        {runningSessions.map(s => {
-                                            const cfg = getAgentConfig(s.agent_type);
-                                            return (
-                                                <button
-                                                    key={s.id}
-                                                    onClick={() => setSelectedSessionId(s.id)}
-                                                    className={`w-full flex items-center justify-between p-2.5 rounded-lg text-[12px] transition-all duration-150 ${
-                                                        s.id === selectedSessionId
-                                                            ? `${cfg.bg} ${cfg.color}`
-                                                            : 'hover:bg-white/[0.04] text-[#a1a1aa]'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} animate-pulse`} />
-                                                        <span className="font-medium">{s.display_name}</span>
-                                                    </div>
-                                                    <span className="text-[#52525b]">{formatElapsed(s.created_at)}</span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     ) : (
-                        <div className="flex items-center justify-center h-full text-[#52525b] text-[13px]">
+                        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                             Select a session to view details
                         </div>
                     )}
                 </div>
 
-                {/* Right: Changes panel — Superset-inspired diff view */}
-                <div className="w-72 shrink-0 border-l border-white/[0.06] bg-[#0e0e11] flex flex-col">
-                    <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
+                {/* Changes sidebar */}
+                <div className="w-64 shrink-0 border-l border-border bg-muted/20 flex flex-col">
+                    <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <GitBranch className="w-3.5 h-3.5 text-[#71717a]" />
-                            <span className="text-[12px] font-semibold text-[#a1a1aa]">Changes</span>
+                            <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-[12px] font-semibold text-muted-foreground">Changes</span>
                         </div>
                         {(totalAdditions > 0 || totalDeletions > 0) && (
-                            <div className="flex items-center gap-1.5 text-[11px] font-mono">
-                                {totalAdditions > 0 && <span className="text-emerald-400">+{totalAdditions}</span>}
+                            <div className="flex items-center gap-1.5 font-mono text-[10px] tabular-nums">
+                                {totalAdditions > 0 && <span className="text-emerald-500">+{totalAdditions}</span>}
                                 {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
                             </div>
                         )}
                     </div>
-                    <div className="flex-1 overflow-y-auto">
+                    <div className="flex-1 overflow-y-auto hide-scrollbar">
                         {diff && diff.file_stats.length > 0 ? (
                             <div className="py-1">
                                 {diff.file_stats.map((file) => {
@@ -431,17 +415,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     return (
                                         <div
                                             key={file.file}
-                                            className="flex items-center gap-2 px-4 py-2 hover:bg-white/[0.03] transition-colors group"
+                                            className="flex items-center gap-2 px-3 py-1.5 hover:bg-foreground/3 transition-colors"
                                         >
-                                            <FileCode className="w-3.5 h-3.5 text-[#52525b] shrink-0" />
+                                            <FileCode className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
                                             <div className="flex-1 min-w-0">
-                                                <span className="text-[12px] text-[#e4e4e7] truncate block">{fileName}</span>
+                                                <span className="text-[12px] text-foreground/80 truncate block">{fileName}</span>
                                                 {dirPath && (
-                                                    <span className="text-[10px] text-[#52525b] truncate block">{dirPath}/</span>
+                                                    <span className="text-[10px] text-muted-foreground/40 truncate block font-mono">{dirPath}/</span>
                                                 )}
                                             </div>
-                                            <div className="flex items-center gap-1 shrink-0 text-[11px] font-mono">
-                                                {file.additions > 0 && <span className="text-emerald-400">+{file.additions}</span>}
+                                            <div className="flex items-center gap-1 shrink-0 font-mono text-[10px] tabular-nums">
+                                                {file.additions > 0 && <span className="text-emerald-500">+{file.additions}</span>}
                                                 {file.deletions > 0 && <span className="text-red-400">-{file.deletions}</span>}
                                             </div>
                                         </div>
@@ -450,9 +434,9 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                             </div>
                         ) : (
                             <div className="flex flex-col items-center justify-center h-full text-center px-4">
-                                <ChevronRight className="w-5 h-5 text-[#3f3f46] mb-2" />
-                                <p className="text-[11px] text-[#52525b]">No uncommitted changes</p>
-                                <p className="text-[10px] text-[#3f3f46] mt-1">Changes will appear here as agents work</p>
+                                <GitBranch className="w-5 h-5 text-muted-foreground/20 mb-2" />
+                                <p className="text-[11px] text-muted-foreground/40">No uncommitted changes</p>
+                                <p className="text-[10px] text-muted-foreground/25 mt-1">Changes appear here as agents work</p>
                             </div>
                         )}
                     </div>

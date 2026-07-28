@@ -244,14 +244,14 @@ function App() {
                   </div>
                 ) : (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
-                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/15 border border-white/[0.06] flex items-center justify-center mb-6">
-                             <Plus className="w-7 h-7 text-blue-400" />
+                        <div className="w-14 h-14 rounded-2xl bg-foreground/[0.06] flex items-center justify-center mb-6">
+                             <Plus className="w-6 h-6 text-muted-foreground" />
                         </div>
-                        <h3 className="text-[17px] font-semibold tracking-tight text-[#e4e4e7]">Welcome to Orbitae</h3>
-                        <p className="text-[13px] text-[#71717a] mt-2 mb-7 max-w-sm leading-relaxed">
+                        <h3 className="text-base font-semibold tracking-tight text-foreground">Welcome to Orbitae</h3>
+                        <p className="text-[13px] text-muted-foreground mt-2 mb-7 max-w-sm leading-relaxed">
                             Your AI-native project runtime. Manage secrets, orchestrate agents, and ship faster.
                         </p>
-                        <Button onClick={() => handleNewProject('create')} className="bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 px-6">
+                        <Button onClick={() => handleNewProject('create')} className="bg-foreground text-background hover:bg-foreground/90 px-6">
                             Create Your First Project
                         </Button>
                     </div>

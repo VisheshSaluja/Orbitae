@@ -153,12 +153,12 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                 count={playbooks.length}
                 expanded={expanded.runbooks}
                 onToggle={() => toggle('runbooks')}
-                action={<button onClick={handleCreatePlaybook} className="p-1 rounded hover:bg-white/[0.06] text-[#71717a] hover:text-[#e4e4e7] transition-colors"><Plus className="w-3.5 h-3.5" /></button>}
+                action={<button onClick={handleCreatePlaybook} className="p-1 rounded hover:bg-foreground/6 text-muted-foreground hover:text-foreground transition-colors"><Plus className="w-3.5 h-3.5" /></button>}
             />
             {expanded.runbooks && (
                 <div className="px-4 pb-4">
                     {playbooks.length === 0 ? (
-                        <div className="py-8 text-center text-[#71717a] border border-dashed border-white/[0.06] rounded-lg">
+                        <div className="py-8 text-center text-muted-foreground border border-dashed border-border rounded-lg">
                             <BookOpen className="w-6 h-6 mx-auto mb-2 opacity-30" />
                             <p className="text-[12px]">No runbooks yet</p>
                             <button onClick={handleCreatePlaybook} className="text-[12px] text-blue-400 hover:text-blue-300 mt-1">Create one</button>
@@ -168,13 +168,13 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                             {playbooks.map(({ playbook, lastRun }) => (
                                 <div
                                     key={playbook.id}
-                                    className="group flex items-center justify-between p-3 rounded-lg bg-[#141417] border border-white/[0.06] hover:border-white/[0.12] transition-all duration-150 cursor-pointer"
+                                    className="group flex items-center justify-between p-3 rounded-lg bg-card border border-border hover:border-border transition-all duration-150 cursor-pointer"
                                     onClick={() => { setActivePlaybook(playbook); setView('editor'); }}
                                 >
                                     <div className="min-w-0">
-                                        <div className="text-[13px] font-medium text-[#e4e4e7] truncate">{playbook.name}</div>
+                                        <div className="text-[13px] font-medium text-foreground truncate">{playbook.name}</div>
                                         {lastRun && (
-                                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-[#71717a]">
+                                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
                                                 <Clock className="w-3 h-3" />
                                                 <span>{lastRun.run.status}</span>
                                             </div>
@@ -190,7 +190,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                                         </button>
                                         <button
                                             onClick={(e) => handleDeletePlaybook(playbook.id, e)}
-                                            className="p-1.5 rounded-md text-[#71717a] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                            className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
                                             title="Delete"
                                         >
                                             <Trash2 className="w-3.5 h-3.5" />
@@ -230,13 +230,13 @@ interface SectionHeaderProps {
 }
 
 const SectionHeader: React.FC<SectionHeaderProps> = ({ icon: Icon, label, count, expanded, onToggle, action }) => (
-    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-[#0a0a0b]/95 backdrop-blur-sm border-b border-white/[0.04]">
-        <button onClick={onToggle} className="flex items-center gap-2 text-[12px] font-semibold text-[#a1a1aa] uppercase tracking-wider hover:text-[#e4e4e7] transition-colors">
+    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-background/95 backdrop-blur-sm border-b border-border/50">
+        <button onClick={onToggle} className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors">
             {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <Icon className="w-3.5 h-3.5" />
             {label}
             {count !== null && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] text-[#71717a] font-medium normal-case">{count}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-foreground/6 text-muted-foreground font-medium normal-case">{count}</span>
             )}
         </button>
         {action}

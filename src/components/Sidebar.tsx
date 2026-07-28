@@ -13,32 +13,32 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNewProject }) => {
     return (
-        <div className="w-52 border-r border-white/[0.06] bg-[#0c0c0f] flex flex-col h-full select-none">
+        <div className="w-56 border-r border-border bg-muted/40 flex flex-col h-full select-none">
             {/* Brand */}
             <div className="px-4 pt-4 pb-3 flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                    <span className="text-white text-[11px] font-bold">O</span>
+                <div className="w-7 h-7 rounded-lg bg-foreground/10 flex items-center justify-center">
+                    <span className="text-foreground text-[12px] font-bold tracking-tight">O</span>
                 </div>
-                <div>
-                    <span className="text-[13px] font-semibold tracking-tight text-[#e4e4e7]">Orbitae</span>
-                    <span className="text-[9px] text-[#52525b] ml-1.5 font-mono">v0.1</span>
+                <div className="flex items-baseline gap-1.5">
+                    <span className="text-[13px] font-semibold tracking-tight text-foreground">Orbitae</span>
+                    <span className="text-[9px] text-muted-foreground font-mono">v0.1</span>
                 </div>
             </div>
 
             {/* Nav */}
             <div className="px-2 py-1">
-                <div className="px-2.5 py-2 rounded-md bg-white/[0.06] text-[#e4e4e7] text-[12px] font-medium flex items-center gap-2">
-                    <div className="w-1 h-1 rounded-full bg-blue-400" />
+                <div className="px-2.5 py-2 rounded-md bg-foreground/[0.08] text-foreground text-[13px] font-medium flex items-center gap-2.5 cursor-default">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                     Projects
                 </div>
             </div>
 
             <div className="flex-1" />
 
-            {/* Bottom actions */}
-            <div className="p-2 space-y-1 border-t border-white/[0.06]">
+            {/* Bottom */}
+            <div className="p-2 space-y-1 border-t border-border">
                 <button
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-[12px] text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04] transition-colors duration-150"
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[13px] text-muted-foreground hover:text-foreground hover:bg-foreground/[0.05] transition-colors duration-150"
                     onClick={() => {}}
                 >
                     <Settings className="w-3.5 h-3.5" />
@@ -46,7 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewProject }) => {
                 </button>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <button className="w-full flex items-center justify-between gap-2 bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-[12px] font-medium transition-colors duration-150 shadow-lg shadow-blue-500/20">
+                        <button className="w-full flex items-center justify-between bg-foreground text-background px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 hover:bg-foreground/90">
                             <span className="flex items-center gap-2">
                                 <Plus className="w-3.5 h-3.5" />
                                 New Project

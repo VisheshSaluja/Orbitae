@@ -89,7 +89,7 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
                 action={
                     <button
                         onClick={() => setIsAdding(true)}
-                        className="p-1 rounded hover:bg-white/[0.06] text-[#71717a] hover:text-[#e4e4e7] transition-colors"
+                        className="p-1 rounded hover:bg-foreground/6 text-muted-foreground hover:text-foreground transition-colors"
                     >
                         <Plus className="w-3.5 h-3.5" />
                     </button>
@@ -98,13 +98,13 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
             {expanded.envVars && (
                 <div className="px-4 pb-4">
                     {isAdding && (
-                        <div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-[#141417] border border-white/[0.08]">
+                        <div className="flex items-center gap-2 mb-3 p-3 rounded-lg bg-card border border-border">
                             <input
                                 type="text"
                                 value={newKey}
                                 onChange={e => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
                                 placeholder="KEY_NAME"
-                                className="flex-1 bg-transparent text-[13px] font-mono text-[#e4e4e7] outline-none placeholder:text-[#52525b] border-b border-white/[0.06] pb-1"
+                                className="flex-1 bg-transparent text-[13px] font-mono text-foreground outline-none placeholder:text-muted-foreground/50 border-b border-border pb-1"
                                 autoFocus
                             />
                             <input
@@ -112,7 +112,7 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
                                 value={newValue}
                                 onChange={e => setNewValue(e.target.value)}
                                 placeholder="value"
-                                className="flex-1 bg-transparent text-[13px] font-mono text-[#e4e4e7] outline-none placeholder:text-[#52525b] border-b border-white/[0.06] pb-1"
+                                className="flex-1 bg-transparent text-[13px] font-mono text-foreground outline-none placeholder:text-muted-foreground/50 border-b border-border pb-1"
                             />
                             <button
                                 onClick={handleAddEnv}
@@ -123,7 +123,7 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
                             </button>
                             <button
                                 onClick={() => { setIsAdding(false); setNewKey(''); setNewValue(''); }}
-                                className="p-1.5 rounded-md text-[#71717a] hover:text-[#e4e4e7] transition-colors"
+                                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground transition-colors"
                             >
                                 <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -131,7 +131,7 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
                     )}
 
                     {envVars.length === 0 && !isAdding ? (
-                        <div className="py-8 text-center text-[#71717a] border border-dashed border-white/[0.06] rounded-lg">
+                        <div className="py-8 text-center text-muted-foreground border border-dashed border-border rounded-lg">
                             <Variable className="w-6 h-6 mx-auto mb-2 opacity-30" />
                             <p className="text-[12px]">No environment variables</p>
                             <button onClick={() => setIsAdding(true)} className="text-[12px] text-blue-400 hover:text-blue-300 mt-1">Add one</button>
@@ -171,8 +171,8 @@ const EnvVarRow: React.FC<EnvVarRowProps> = ({ env, onSave }) => {
     };
 
     return (
-        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-[#141417] border border-white/[0.06] hover:border-white/[0.1] transition-colors group">
-            <span className="text-[12px] font-mono font-medium text-[#a1a1aa] w-40 shrink-0 truncate" title={env.key}>
+        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-card border border-border hover:border-border transition-colors group">
+            <span className="text-[12px] font-mono font-medium text-muted-foreground w-40 shrink-0 truncate" title={env.key}>
                 {env.key}
             </span>
             <input
@@ -181,7 +181,7 @@ const EnvVarRow: React.FC<EnvVarRowProps> = ({ env, onSave }) => {
                 onChange={e => handleChange(e.target.value)}
                 onBlur={handleBlur}
                 onKeyDown={e => { if (e.key === 'Enter') handleBlur(); }}
-                className="flex-1 bg-transparent text-[12px] font-mono text-[#e4e4e7] outline-none placeholder:text-[#52525b]"
+                className="flex-1 bg-transparent text-[12px] font-mono text-foreground outline-none placeholder:text-muted-foreground/50"
             />
             {dirty && (
                 <span className="text-[9px] text-amber-400 shrink-0">unsaved</span>
@@ -199,8 +199,8 @@ interface SectionHeaderProps {
 }
 
 const SectionHeader: React.FC<SectionHeaderProps> = ({ icon: Icon, label, expanded, onToggle, action }) => (
-    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-[#0a0a0b]/95 backdrop-blur-sm border-b border-white/[0.04]">
-        <button onClick={onToggle} className="flex items-center gap-2 text-[12px] font-semibold text-[#a1a1aa] uppercase tracking-wider hover:text-[#e4e4e7] transition-colors">
+    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-background/95 backdrop-blur-sm border-b border-border/50">
+        <button onClick={onToggle} className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors">
             {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <Icon className="w-3.5 h-3.5" />
             {label}

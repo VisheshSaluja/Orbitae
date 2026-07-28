@@ -154,30 +154,30 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     }, [activeTab, project]);
 
     return (
-        <div className="flex flex-col h-screen bg-[#0a0a0b]">
-            {/* Top bar */}
-            <header className="h-11 shrink-0 border-b border-white/[0.06] flex items-center justify-between px-4 select-none">
+        <div className="flex flex-col h-screen bg-background">
+            {/* Header */}
+            <header className="h-12 shrink-0 border-b border-border flex items-center justify-between px-4 select-none">
                 <div className="flex items-center gap-3">
                     <button
                         onClick={onClose}
-                        className="flex items-center gap-1.5 text-[11px] text-[#71717a] hover:text-[#e4e4e7] transition-colors duration-150"
+                        className="flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors duration-150"
                     >
                         <ChevronLeft className="w-3.5 h-3.5" />
                         Projects
                     </button>
-                    <span className="text-white/10">/</span>
-                    <span className="text-[13px] font-medium flex items-center gap-2 text-[#e4e4e7]">
-                        <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-border">/</span>
+                    <span className="text-sm font-medium flex items-center gap-2 text-foreground">
+                        <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
                         {project.name}
                     </span>
                 </div>
-                <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#71717a] border border-white/[0.06]">
+                <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-muted-foreground border border-border">
                     {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}K
                 </kbd>
             </header>
 
-            {/* Tab bar */}
-            <div className="shrink-0 border-b border-white/[0.06] flex items-center justify-center gap-1 px-4 py-1.5">
+            {/* Tab bar — Superset-style underline tabs */}
+            <div className="shrink-0 flex items-center border-b border-border px-4">
                 {TABS.map((tab, idx) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -185,15 +185,18 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all duration-150 ${
+                            className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
                                 isActive
-                                    ? 'bg-white/[0.08] text-[#e4e4e7]'
-                                    : 'text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04]'
+                                    ? 'text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground'
                             }`}
                         >
                             <Icon className="w-3.5 h-3.5" />
                             {tab.label}
-                            <kbd className="text-[9px] text-[#52525b] ml-1">{idx + 1}</kbd>
+                            <kbd className="text-[9px] text-muted-foreground/50 ml-0.5 tabular-nums">{idx + 1}</kbd>
+                            {isActive && (
+                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground rounded-full" />
+                            )}
                         </button>
                     );
                 })}
@@ -214,11 +217,11 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                 >
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
                     <div
-                        className="relative w-full max-w-md bg-[#141417] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden"
+                        className="relative w-full max-w-md bg-popover border border-border rounded-xl shadow-2xl overflow-hidden"
                         onClick={e => e.stopPropagation()}
                     >
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
-                            <Search className="w-4 h-4 text-[#71717a] shrink-0" />
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                             <input
                                 ref={paletteInputRef}
                                 type="text"
@@ -226,14 +229,14 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                                 onChange={e => setPaletteQuery(e.target.value)}
                                 onKeyDown={e => { e.stopPropagation(); handlePaletteKeyDown(e); }}
                                 placeholder="Type a command..."
-                                className="flex-1 bg-transparent text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b]"
+                                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50"
                                 autoFocus
                             />
-                            <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#71717a]">ESC</kbd>
+                            <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/[0.06] text-muted-foreground">ESC</kbd>
                         </div>
                         <div className="max-h-64 overflow-y-auto py-1">
                             {filteredActions.length === 0 && (
-                                <p className="text-[13px] text-[#71717a] text-center py-6">No matching commands</p>
+                                <p className="text-sm text-muted-foreground text-center py-6">No matching commands</p>
                             )}
                             {filteredActions.map((action, idx) => {
                                 const Icon = action.icon;
@@ -241,13 +244,13 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                                     <button
                                         key={action.id}
                                         onClick={() => executePaletteAction(action)}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-[13px] transition-colors duration-150 ${
-                                            idx === paletteIndex ? 'bg-blue-500/10 text-blue-400' : 'text-[#e4e4e7] hover:bg-white/[0.04]'
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors duration-100 ${
+                                            idx === paletteIndex ? 'bg-accent text-foreground' : 'text-foreground hover:bg-accent/50'
                                         }`}
                                     >
                                         <Icon className="w-4 h-4 shrink-0" />
                                         <span className="flex-1 text-left">{action.label}</span>
-                                        <span className="text-[10px] text-[#52525b]">{action.section}</span>
+                                        <span className="text-[10px] text-muted-foreground">{action.section}</span>
                                     </button>
                                 );
                             })}

@@ -32,11 +32,17 @@ impl AgentSessionService {
         for i in 1..=request.count {
             let id = Uuid::new_v4().to_string();
             let display_name = build_display_name(&request.agent_type, i);
+
+            let context_path = match &request.instructions {
+                Some(instr) => Some(write_context_file(&id, instr)?),
+                None => None,
+            };
+
             let cli_command = build_cli_command(
                 &request.agent_type,
                 &request.project_path,
                 api_key,
-                request.instructions.as_deref(),
+                context_path.as_deref(),
             );
 
             let pid = launch_terminal_window(&display_name, &cli_command)?;
@@ -83,7 +89,7 @@ impl AgentSessionService {
         sessions.values().cloned().collect()
     }
 
-    /// Stop a running agent session by killing its process and updating state.
+    /// Stop a running agent session by closing its terminal window and updating state.
     pub fn stop_session(state: &AgentSessionState, session_id: &str) -> Result<()> {
         let mut sessions = state.lock().expect("AgentSessionState lock poisoned");
         let session = sessions
@@ -94,8 +100,10 @@ impl AgentSessionService {
             return Ok(());
         }
 
-        if let Some(pid) = session.pid {
-            kill_process(pid)?;
+        if let Some(window_id) = session.pid {
+            close_terminal_by_window_id(window_id);
+        } else {
+            close_terminal_by_title(&session.display_name);
         }
 
         session.status = "stopped".to_string();
@@ -116,16 +124,16 @@ fn build_display_name(agent_type: &str, index: u32) -> String {
 
 /// Build the shell command string to execute inside the terminal window.
 ///
-/// This includes environment variable exports, directory change, and the agent CLI invocation.
+/// Context is written to a temp file to avoid escaping issues with AppleScript.
+/// Agents always start in interactive mode (no `--print`).
 fn build_cli_command(
     agent_type: &str,
     project_path: &str,
     api_key: Option<&str>,
-    instructions: Option<&str>,
+    context_file: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
-    // Inject API key as environment variable
     if let Some(key) = api_key {
         let env_var = match agent_type {
             "claude" => "ANTHROPIC_API_KEY",
@@ -133,55 +141,41 @@ fn build_cli_command(
             _ => "",
         };
         if !env_var.is_empty() {
-            // Single-quote the key value and escape any embedded single quotes
             let escaped_key = key.replace('\'', "'\\''");
             parts.push(format!("export {}='{}'", env_var, escaped_key));
         }
     }
 
-    // Change to project directory
     let escaped_path = project_path.replace('\'', "'\\''");
     parts.push(format!("cd '{}'", escaped_path));
 
-    // Build the agent CLI invocation
-    let agent_cmd = match agent_type {
-        "claude" => {
-            if let Some(instr) = instructions {
-                let escaped_instr = instr.replace('\'', "'\\''");
-                format!("claude --print '{}'", escaped_instr)
-            } else {
-                "claude".to_string()
-            }
-        }
-        "codex" => {
-            if let Some(instr) = instructions {
-                let escaped_instr = instr.replace('\'', "'\\''");
-                format!("codex '{}'", escaped_instr)
-            } else {
-                "codex".to_string()
-            }
-        }
-        _ => {
-            // Custom: just open a shell, optionally echo instructions
-            if let Some(instr) = instructions {
-                let escaped_instr = instr.replace('\'', "'\\''");
-                format!("echo '{}'; exec $SHELL", escaped_instr)
-            } else {
-                "exec $SHELL".to_string()
-            }
-        }
-    };
+    if let Some(ctx_path) = context_file {
+        parts.push(format!("echo '\\n📋 Project context written to: {}'", ctx_path));
+    }
 
+    let agent_cmd = match agent_type {
+        "claude" => "claude".to_string(),
+        "codex" => "codex".to_string(),
+        _ => "exec $SHELL".to_string(),
+    };
     parts.push(agent_cmd);
+
     parts.join("; ")
+}
+
+/// Write instructions to a temp file, returning the path.
+fn write_context_file(session_id: &str, instructions: &str) -> Result<String> {
+    let path = format!("/tmp/orbitae-ctx-{}.md", session_id);
+    std::fs::write(&path, instructions)
+        .context("Failed to write context file")?;
+    Ok(path)
 }
 
 /// Launch a new Terminal.app window via AppleScript, executing the given command.
 ///
-/// Returns the PID of the spawned `osascript` process.
+/// Returns the Terminal.app window ID (used to close it later).
 #[cfg(target_os = "macos")]
 fn launch_terminal_window(display_name: &str, command: &str) -> Result<u32> {
-    // Escape for AppleScript string (double-quote context): backslash, double-quote, and newlines
     let escaped_cmd = command.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
     let escaped_name = display_name.replace('\\', "\\\\").replace('"', "\\\"");
 
@@ -190,16 +184,26 @@ fn launch_terminal_window(display_name: &str, command: &str) -> Result<u32> {
     activate
     do script "{escaped_cmd}"
     set custom title of tab 1 of front window to "{escaped_name}"
+    return id of front window
 end tell"#
     );
 
-    let child = std::process::Command::new("osascript")
+    let output = std::process::Command::new("osascript")
         .arg("-e")
         .arg(&script)
-        .spawn()
-        .context("Failed to spawn osascript for terminal launch")?;
+        .output()
+        .context("Failed to execute osascript for terminal launch")?;
 
-    Ok(child.id())
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("AppleScript failed: {}", stderr);
+    }
+
+    let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let window_id: u32 = id_str.parse()
+        .context(format!("Failed to parse Terminal window ID from: '{}'", id_str))?;
+
+    Ok(window_id)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -304,27 +308,51 @@ fn compute_tile_bounds(count: u32) -> Vec<String> {
     }
 }
 
-/// Kill a process by PID using SIGTERM.
-#[cfg(unix)]
-fn kill_process(pid: u32) -> Result<()> {
-    use std::process::Command;
-
-    let status = Command::new("kill")
-        .arg(pid.to_string())
-        .status()
-        .context(format!("Failed to send SIGTERM to PID {}", pid))?;
-
-    if !status.success() {
-        tracing::warn!(pid, "kill command exited with non-zero status — process may already be dead");
-    }
-
-    Ok(())
+/// Close a Terminal.app window by its window ID (reliable).
+#[cfg(target_os = "macos")]
+fn close_terminal_by_window_id(window_id: u32) {
+    let script = format!(
+        r#"tell application "Terminal"
+    try
+        close (every window whose id is {window_id}) saving no
+    end try
+end tell"#
+    );
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
 }
 
-#[cfg(not(unix))]
-fn kill_process(pid: u32) -> Result<()> {
-    anyhow::bail!("Process termination is not implemented on this platform for PID {}", pid)
+#[cfg(not(target_os = "macos"))]
+fn close_terminal_by_window_id(_window_id: u32) {}
+
+/// Close a Terminal.app window by matching its custom title (fallback).
+#[cfg(target_os = "macos")]
+fn close_terminal_by_title(display_name: &str) {
+    let escaped = display_name.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        r#"tell application "Terminal"
+    repeat with w in windows
+        try
+            repeat with t in tabs of w
+                if custom title of t is "{escaped}" then
+                    close w saving no
+                    return
+                end if
+            end repeat
+        end try
+    end repeat
+end tell"#
+    );
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output();
 }
+
+#[cfg(not(target_os = "macos"))]
+fn close_terminal_by_title(_display_name: &str) {}
 
 #[cfg(test)]
 mod tests {
@@ -339,19 +367,28 @@ mod tests {
     }
 
     #[test]
-    fn build_cli_command_claude_with_key_and_instructions() {
-        let cmd = build_cli_command("claude", "/tmp/project", Some("sk-ant-123"), Some("fix bugs"));
+    fn build_cli_command_claude_with_key_and_context_file() {
+        let cmd = build_cli_command("claude", "/tmp/project", Some("sk-ant-123"), Some("/tmp/ctx.md"));
         assert!(cmd.contains("export ANTHROPIC_API_KEY='sk-ant-123'"));
         assert!(cmd.contains("cd '/tmp/project'"));
-        assert!(cmd.contains("claude --print 'fix bugs'"));
+        assert!(cmd.contains("claude"));
+        assert!(!cmd.contains("--print"));
+        assert!(cmd.contains("/tmp/ctx.md"));
     }
 
     #[test]
-    fn build_cli_command_codex_without_instructions() {
+    fn build_cli_command_claude_interactive_no_context() {
+        let cmd = build_cli_command("claude", "/tmp/project", Some("sk-ant-123"), None);
+        assert!(cmd.contains("claude"));
+        assert!(!cmd.contains("--print"));
+        assert!(!cmd.contains("context"));
+    }
+
+    #[test]
+    fn build_cli_command_codex_without_context() {
         let cmd = build_cli_command("codex", "/tmp/project", Some("sk-openai-456"), None);
         assert!(cmd.contains("export OPENAI_API_KEY='sk-openai-456'"));
         assert!(cmd.contains("codex"));
-        assert!(!cmd.contains("--print"));
     }
 
     #[test]

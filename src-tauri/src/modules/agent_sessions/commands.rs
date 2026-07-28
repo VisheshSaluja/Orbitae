@@ -113,10 +113,22 @@ pub async fn stop_agent_session(
     pool: State<'_, SqlitePool>,
     session_id: String,
 ) -> Result<(), String> {
+    let needs_hydrate = {
+        let sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        !sessions.contains_key(&session_id)
+    };
+
+    if needs_hydrate {
+        let repo = AgentSessionRepository::new(pool.inner().clone());
+        if let Ok(Some(db_session)) = repo.get_by_id(&session_id).await {
+            let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+            sessions.insert(session_id.clone(), db_session);
+        }
+    }
+
     AgentSessionService::stop_session(state.inner(), &session_id)
         .map_err(|e| format!("Failed to stop session: {}", e))?;
 
-    // Update SQLite
     let repo = AgentSessionRepository::new(pool.inner().clone());
     repo.update_status(&session_id, "stopped").await
         .map_err(|e| format!("Failed to update session status: {}", e))?;

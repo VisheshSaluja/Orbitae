@@ -52,22 +52,19 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onLaunch }) =
         <>
             <button
                 onClick={() => onLaunch(project.id)}
-                className="group w-full text-left rounded-xl bg-[#111114] border border-white/[0.06] hover:border-white/[0.12] transition-all duration-200 overflow-hidden"
+                className="group w-full text-left rounded-lg bg-card border border-border hover:bg-accent transition-all duration-150 overflow-hidden"
             >
-                {/* Top accent gradient */}
-                <div className="h-1 bg-gradient-to-r from-blue-500/60 via-blue-400/30 to-transparent" />
-
                 <div className="p-4">
                     <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/15 to-purple-500/10 border border-white/[0.06] flex items-center justify-center shrink-0">
-                                <FolderOpen className="w-4 h-4 text-blue-400" />
+                            <div className="w-9 h-9 rounded-lg bg-foreground/[0.06] flex items-center justify-center shrink-0">
+                                <FolderOpen className="w-4 h-4 text-muted-foreground" />
                             </div>
                             <div className="min-w-0">
-                                <div className="text-[13px] font-semibold text-[#e4e4e7] truncate group-hover:text-white transition-colors">
+                                <div className="text-[13px] font-medium text-foreground truncate group-hover:text-foreground transition-colors">
                                     {project.name}
                                 </div>
-                                <div className="text-[10px] font-mono text-[#52525b] truncate mt-0.5">
+                                <div className="text-[11px] font-mono text-muted-foreground/60 truncate mt-0.5">
                                     ~/{folderName}
                                 </div>
                             </div>
@@ -75,13 +72,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onLaunch }) =
 
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
                             <button
-                                className="p-1.5 rounded-md text-[#52525b] hover:text-[#e4e4e7] hover:bg-white/[0.06] transition-colors"
+                                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/[0.06] transition-colors"
                                 onClick={(e) => { e.stopPropagation(); setShowEdit(true); }}
                             >
                                 <Pencil className="w-3 h-3" />
                             </button>
                             <button
-                                className="p-1.5 rounded-md text-[#52525b] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                                 onClick={(e) => { e.stopPropagation(); setShowDelete(true); }}
                             >
                                 <Trash2 className="w-3 h-3" />
@@ -89,26 +86,26 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onLaunch }) =
                         </div>
                     </div>
 
-                    {/* Git status row */}
-                    <div className="flex items-center justify-between mt-3.5 pt-3 border-t border-white/[0.04]">
+                    {/* Git status */}
+                    <div className="flex items-center justify-between mt-3.5 pt-3 border-t border-border/50">
                         <div className="flex items-center gap-3">
                             {gitStatus ? (
                                 <>
-                                    <div className="flex items-center gap-1.5 text-[11px] text-[#71717a]">
+                                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                                         <GitBranch className="w-3 h-3" />
                                         <span className="font-mono">{gitStatus.branch}</span>
                                     </div>
                                     {gitStatus.modified_count > 0 && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono tabular-nums">
                                             {gitStatus.modified_count} changed
                                         </span>
                                     )}
                                 </>
                             ) : (
-                                <span className="text-[10px] text-[#3f3f46]">No git repo</span>
+                                <span className="text-[10px] text-muted-foreground/40">No git repo</span>
                             )}
                         </div>
-                        <ChevronRight className="w-3.5 h-3.5 text-[#3f3f46] group-hover:text-[#71717a] transition-colors" />
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/30 group-hover:text-muted-foreground transition-colors" />
                     </div>
                 </div>
             </button>

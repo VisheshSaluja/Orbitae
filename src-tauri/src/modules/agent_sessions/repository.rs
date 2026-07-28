@@ -46,6 +46,18 @@ impl AgentSessionRepository {
         Ok(())
     }
 
+    /// Fetch a single session by ID.
+    pub async fn get_by_id(&self, id: &str) -> Result<Option<AgentSession>> {
+        let row = sqlx::query_as::<_, AgentSessionRow>(
+            "SELECT id, agent_type, display_name, status, pid, project_id, instructions, created_at FROM agent_sessions WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.into()))
+    }
+
     /// List sessions for a project, most recent first.
     pub async fn list_by_project(&self, project_id: &str) -> Result<Vec<AgentSession>> {
         let rows = sqlx::query_as::<_, AgentSessionRow>(
