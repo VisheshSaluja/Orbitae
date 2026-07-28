@@ -1,84 +1,72 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutGrid, Plus, FolderInput, GitBranch, ChevronUp, Sun, Moon } from 'lucide-react';
+import { Plus, FolderInput, GitBranch, ChevronUp, Sun, Moon } from 'lucide-react';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu"
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 
 interface SidebarProps {
-  onNewProject: (mode: 'create' | 'import' | 'clone') => void;
+    onNewProject: (mode: 'create' | 'import' | 'clone') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNewProject }) => {
-  const [isDark, setIsDark] = useState(() =>
-    document.documentElement.classList.contains('dark')
-  );
+    const [isDark, setIsDark] = useState(() =>
+        document.documentElement.classList.contains('dark')
+    );
 
-  useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('orbitae-theme', isDark ? 'dark' : 'light');
-  }, [isDark]);
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+        localStorage.setItem('orbitae-theme', isDark ? 'dark' : 'light');
+    }, [isDark]);
 
-  return (
-    <div className="w-64 border-r border-border bg-card flex flex-col h-full">
-      <div className="p-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
-          Orbitae
-        </h1>
-        <button
-          onClick={() => setIsDark(prev => !prev)}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-        </button>
-      </div>
-
-      <nav className="flex-1 px-4 space-y-1">
-        <div
-          className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md bg-accent text-accent-foreground"
-        >
-          <LayoutGrid className="w-4 h-4" />
-          Projects
-        </div>
-      </nav>
-
-      <div className="p-4 border-t border-border">
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-                <button 
-                className="w-full flex items-center justify-between gap-2 bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-md text-sm font-medium transition-colors"
+    return (
+        <div className="w-56 border-r border-white/[0.06] bg-[#0e0e11] flex flex-col h-full">
+            <div className="px-5 pt-5 pb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span className="text-[15px] font-semibold tracking-tight text-[#e4e4e7]">
+                        Orbitae
+                    </span>
+                </div>
+                <button
+                    onClick={() => setIsDark(prev => !prev)}
+                    className="p-1.5 rounded-md text-[#71717a] hover:text-[#e4e4e7] hover:bg-white/[0.06] transition-colors duration-150"
                 >
-                <span className="flex items-center gap-2">
-                    <Plus className="w-4 h-4" />
-                    New Project
-                </span>
-                <ChevronUp className="w-3 h-3 opacity-50" />
+                    {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                 </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" className="w-56" align="center">
-                <DropdownMenuItem onClick={() => onNewProject('create')}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create New
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onNewProject('import')}>
-                    <FolderInput className="w-4 h-4 mr-2" />
-                    Import Folder
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onNewProject('clone')}>
-                    <GitBranch className="w-4 h-4 mr-2" />
-                    Clone Repository
-                </DropdownMenuItem>
-            </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  );
+            </div>
+
+            <div className="flex-1" />
+
+            <div className="p-3 border-t border-white/[0.06]">
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button className="w-full flex items-center justify-between gap-2 bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150">
+                            <span className="flex items-center gap-2">
+                                <Plus className="w-3.5 h-3.5" />
+                                New Project
+                            </span>
+                            <ChevronUp className="w-3 h-3 opacity-50" />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" className="w-52" align="center">
+                        <DropdownMenuItem onClick={() => onNewProject('create')}>
+                            <Plus className="w-3.5 h-3.5 mr-2" />
+                            Create New
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onNewProject('import')}>
+                            <FolderInput className="w-3.5 h-3.5 mr-2" />
+                            Import Folder
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onNewProject('clone')}>
+                            <GitBranch className="w-3.5 h-3.5 mr-2" />
+                            Clone Repository
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            </div>
+        </div>
+    );
 };

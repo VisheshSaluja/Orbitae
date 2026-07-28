@@ -1,12 +1,7 @@
 pub mod projects;
-pub mod ssh;
 pub mod vault;
-pub mod system;
-pub mod terminal;
-pub mod git;
-pub mod processes;
 pub mod databases;
-pub mod knowledge;
 pub mod ai;
 pub mod mcp;
 pub mod playbooks;
+pub mod agent_sessions;

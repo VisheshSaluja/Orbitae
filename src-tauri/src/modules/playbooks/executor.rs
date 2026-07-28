@@ -1,6 +1,5 @@
 use super::models::PlaybookRunWithSteps;
 use super::repository::PlaybookRunRepository;
-use crate::modules::knowledge::service::KnowledgeService;
 use crate::modules::projects::repository::ProjectRepository;
 use anyhow::{Result, bail};
 use sqlx::SqlitePool;
@@ -197,12 +196,7 @@ impl PlaybookExecutor {
         let step_runs = run_repo.get_run_steps(&run_id).await?;
         let final_run = run_repo.get_run(&run_id).await?.unwrap();
 
-        self.record_to_knowledge_graph(
-            &playbook.project_id,
-            &playbook.name,
-            final_status,
-            &step_runs,
-        ).await;
+        let _ = (&playbook.project_id, &playbook.name, final_status);
 
         Ok(PlaybookRunWithSteps { run: final_run, steps: step_runs })
     }
@@ -306,76 +300,6 @@ impl PlaybookExecutor {
         }
     }
 
-    /// Records playbook run results into the knowledge graph.
-    /// Creates a new node or updates an existing one matched by playbook name + source.
-    async fn record_to_knowledge_graph(
-        &self,
-        project_id: &str,
-        playbook_name: &str,
-        status: &str,
-        step_runs: &[super::models::StepRun],
-    ) {
-        let kg = KnowledgeService::new(self.pool.clone());
-
-        let passed = step_runs.iter().filter(|s| s.status == "passed").count();
-        let failed = step_runs.iter().filter(|s| s.status == "failed").count();
-        let skipped = step_runs.iter().filter(|s| s.status == "skipped").count();
-        let total = step_runs.len();
-
-        let step_details: Vec<String> = step_runs.iter().map(|s| {
-            format!("- {}: {}", s.step_name, s.status)
-        }).collect();
-
-        let content = format!(
-            "Last run: {status}\nSteps: {passed}/{total} passed, {failed} failed, {skipped} skipped\n\n{details}",
-            status = status,
-            passed = passed,
-            total = total,
-            failed = failed,
-            skipped = skipped,
-            details = step_details.join("\n"),
-        );
-
-        let node_title = format!("Playbook: {}", playbook_name);
-
-        let result = match kg.search_nodes(project_id, Some(&node_title), Some("runbook"), None, Some(1)).await {
-            Ok(nodes) => {
-                if let Some(existing) = nodes.into_iter().find(|n| n.source == "playbook_run") {
-                    kg.update_node(
-                        &existing.id,
-                        Some(&node_title),
-                        Some(&content),
-                        None,
-                        Some("active"),
-                        Some(vec!["playbook".to_string(), status.to_string()]),
-                    ).await
-                } else {
-                    kg.create_node(
-                        project_id,
-                        &node_title,
-                        &content,
-                        "runbook",
-                        Some("playbook_run"),
-                        Some(vec!["playbook".to_string(), status.to_string()]),
-                    ).await
-                }
-            }
-            Err(_) => {
-                kg.create_node(
-                    project_id,
-                    &node_title,
-                    &content,
-                    "runbook",
-                    Some("playbook_run"),
-                    Some(vec!["playbook".to_string(), status.to_string()]),
-                ).await
-            }
-        };
-
-        if let Err(e) = result {
-            tracing::warn!(error = %e, "Failed to record playbook run to knowledge graph");
-        }
-    }
 
     /// Emits a Tauri event for run status changes.
     fn emit_run_event(&self, run_id: &str, status: &str, _detail: Option<&str>) {

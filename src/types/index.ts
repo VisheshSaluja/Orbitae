@@ -4,25 +4,9 @@ export interface Project {
     path: string;
     ssh_key_path?: string;
     notes?: string;
-    settings?: string; // JSON string
+    settings?: string;
     created_at: string;
     updated_at: string;
-}
-
-export interface SshHostModel {
-    host: string;
-    hostname: string;
-    user?: string;
-    port?: number;
-    identity_file?: string;
-}
-
-export interface Snippet {
-    id: string;
-    project_id: string;
-    label: string;
-    command: string;
-    description?: string;
 }
 
 export interface ProjectKey {
@@ -48,6 +32,14 @@ export interface ProjectSettings {
     note_labels: Record<string, string>;
 }
 
+export interface GitStatus {
+    branch: string;
+    modified_count: number;
+    ahead: number;
+    behind: number;
+    remote_url?: string;
+}
+
 export interface Commit {
     hash: string;
     parents: string[];
@@ -57,30 +49,14 @@ export interface Commit {
     refs: string;
 }
 
-export interface GitStatus {
-    branch: string;
-    modified_count: number;
-    ahead: number;
-    behind: number;
-    remote_url?: string;
-}
-
 export interface ProjectConnection {
     id: string;
     project_id: string;
     name: string;
     kind: 'postgres' | 'mysql' | 'sqlite';
-    details: string; // JSON string
+    details: string;
     created_at: string;
     updated_at: string;
-}
-
-export interface Process {
-    id: string;
-    command: string;
-    cwd: string;
-    running: boolean;
-    pid: number;
 }
 
 export interface ProjectPlaybook {
@@ -105,23 +81,6 @@ export interface PlaybookStep {
     retry_delay_ms: number;
     created_at: string;
     updated_at: string;
-}
-
-export interface ProjectScript {
-    name: string;
-    command: string;
-    source: string;
-}
-
-export interface ProjectLink {
-    id: string;
-    project_id: string;
-    title: string;
-    url: string;
-    icon?: string;
-    kind: 'url' | 'command' | 'repository';
-    working_directory?: string;
-    created_at: string;
 }
 
 export type RunStatus = 'pending' | 'running' | 'passed' | 'failed' | 'aborted' | 'skipped';
@@ -167,51 +126,20 @@ export interface TableInfo {
     schema?: string;
 }
 
+export interface ProjectEnv {
+    id: string;
+    project_id: string;
+    key: string;
+    value: string;
+}
+
 export interface ProjectContext {
     projectId: string;
     name: string;
     path: string;
-    scripts?: ProjectScript[];
-    knowledgeNodes?: KnowledgeNode[];
 }
 
-// Knowledge Graph
-export interface KnowledgeNode {
-    id: string;
-    project_id: string;
-    title: string;
-    content: string;
-    kind: string;
-    source: string;
-    status: string;
-    tags: string;
-    created_at: string;
-    updated_at: string;
-}
-
-export interface KnowledgeEdge {
-    id: string;
-    from_node: string;
-    to_node: string;
-    relation: string;
-    created_at: string;
-}
-
-export interface KnowledgeLogEntry {
-    id: string;
-    project_id: string;
-    action: string;
-    summary: string;
-    affected_nodes: string;
-    created_at: string;
-}
-
-export interface NodeWithEdges {
-    node: KnowledgeNode;
-    edges: KnowledgeEdge[];
-}
-
-// AI Agent Hub
+// AI Provider Config
 export interface AiProviderInfo {
     id: string;
     name: string;
@@ -258,5 +186,16 @@ export interface ConversationMessage {
     content: string;
     tool_calls?: string;
     tool_results?: string;
+    created_at: string;
+}
+
+// Agent Sessions
+export interface AgentSession {
+    id: string;
+    agent_type: string;
+    display_name: string;
+    status: string;
+    pid: number | null;
+    project_id: string;
     created_at: string;
 }

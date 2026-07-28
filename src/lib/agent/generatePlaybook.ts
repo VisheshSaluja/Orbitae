@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { invokeCommand } from '../tauri';
-import type { AiProviderConfig, ProjectScript } from '../../types';
+import type { AiProviderConfig } from '../../types';
 
 const PLAYBOOK_SYSTEM_PROMPT = `You are a DevOps automation expert. Generate a playbook YAML for automating a development environment setup.
 
@@ -55,21 +55,9 @@ export async function generatePlaybookYaml(
         baseURL,
     } as Parameters<typeof createOpenAI>[0]);
 
-    let scripts: ProjectScript[] = [];
-    try {
-        scripts = await invokeCommand<ProjectScript[]>('get_project_scripts', { path: projectPath });
-    } catch {
-        // no scripts found
-    }
-
-    const scriptsContext = scripts.length > 0
-        ? `\nAvailable scripts:\n${scripts.map(s => `- ${s.name}: "${s.command}" (from ${s.source})`).join('\n')}`
-        : '\nNo package scripts detected.';
-
     const userPrompt = `Generate a startup playbook for this project:
 Project: ${projectName}
 Path: ${projectPath}
-${scriptsContext}
 
 Create a practical playbook that starts the full development environment.`;
 

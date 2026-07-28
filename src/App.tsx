@@ -175,6 +175,7 @@ function App() {
             />
         ) : (
             <AppLayout
+                projectCount={projects.length}
                 onNewProject={handleNewProject}
             >
                 {projects.length > 0 ? (

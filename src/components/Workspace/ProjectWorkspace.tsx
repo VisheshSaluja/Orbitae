@@ -1,30 +1,27 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { CommandCenterPanel } from './CommandCenterPanel';
-import { AgentPanel } from './AgentPanel';
-import { WorkspacePanel } from './WorkspacePanel';
-import { SettingsPanel } from './SettingsPanel';
 import { TerminalTab } from './TerminalTab';
+import { ContextPanel } from './ContextPanel';
+import { ConnectPanel } from './ConnectPanel';
 import type { Project } from '../../types';
 import {
-    ChevronLeft, FolderOpen, PanelLeftClose, PanelLeft,
-    Rocket, Bot, Terminal, ScrollText, Settings, Search,
+    ChevronLeft, FolderOpen, Bot, FileText, Database, Search,
+    Download, Upload,
     type LucideIcon,
 } from 'lucide-react';
 import { ErrorBoundary } from '../ui/error-boundary';
+import { invokeCommand } from '../../lib/tauri';
+import { toast } from 'sonner';
 
-interface NavItem {
+interface TabItem {
     id: string;
     label: string;
     icon: LucideIcon;
-    description: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
-    { id: 'command-center', label: 'Command Center', icon: Rocket, description: 'Project cockpit' },
-    { id: 'agent', label: 'Agent', icon: Bot, description: 'AI assistant' },
-    { id: 'terminal', label: 'Terminal', icon: Terminal, description: 'Shell access' },
-    { id: 'workspace', label: 'Workspace', icon: ScrollText, description: 'Notes & knowledge' },
-    { id: 'settings', label: 'Settings', icon: Settings, description: 'Configuration' },
+const TABS: TabItem[] = [
+    { id: 'agents', label: 'Agents', icon: Bot },
+    { id: 'context', label: 'Context', icon: FileText },
+    { id: 'connect', label: 'Connect', icon: Database },
 ];
 
 interface ProjectWorkspaceProps {
@@ -41,36 +38,61 @@ interface CommandAction {
 }
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose }) => {
-    const [activeTab, setActiveTab] = useState('command-center');
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [activeTab, setActiveTab] = useState('agents');
     const [paletteOpen, setPaletteOpen] = useState(false);
     const [paletteQuery, setPaletteQuery] = useState('');
     const [paletteIndex, setPaletteIndex] = useState(0);
     const paletteInputRef = useRef<HTMLInputElement>(null);
 
-    const handleNavigate = useCallback((tab: string) => {
-        setActiveTab(tab);
-    }, []);
+    const handleExport = useCallback(async () => {
+        try {
+            const path = await invokeCommand<string>('export_project', { projectId: project.id });
+            toast.success(`Exported to ${path}`);
+        } catch (err) {
+            toast.error(`Export failed: ${err}`);
+        }
+    }, [project.id]);
+
+    const handleImport = useCallback(async () => {
+        try {
+            const { open } = await import('@tauri-apps/plugin-dialog');
+            const selected = await open({
+                filters: [{ name: 'Orbitae', extensions: ['orbitae'] }],
+                multiple: false,
+            });
+            if (!selected || typeof selected !== 'string') return;
+            const result = await invokeCommand<{
+                imported_envs: number;
+                imported_notes: number;
+                imported_playbooks: number;
+                vault_keys_needed: string[];
+            }>('import_project_bundle', { projectId: project.id, filePath: selected });
+            let msg = `Imported: ${result.imported_envs} env vars, ${result.imported_notes} notes, ${result.imported_playbooks} runbooks`;
+            if (result.vault_keys_needed.length > 0) {
+                msg += `. Vault keys needed: ${result.vault_keys_needed.join(', ')}`;
+            }
+            toast.success(msg);
+        } catch (err) {
+            toast.error(`Import failed: ${err}`);
+        }
+    }, [project.id]);
 
     const commandActions: CommandAction[] = useMemo(() => [
-        { id: 'nav-command-center', label: 'Go to Command Center', icon: Rocket, section: 'Navigation', action: () => setActiveTab('command-center') },
-        { id: 'nav-agent', label: 'Go to Agent', icon: Bot, section: 'Navigation', action: () => setActiveTab('agent') },
-        { id: 'nav-terminal', label: 'Go to Terminal', icon: Terminal, section: 'Navigation', action: () => setActiveTab('terminal') },
-        { id: 'nav-workspace', label: 'Go to Workspace', icon: ScrollText, section: 'Navigation', action: () => setActiveTab('workspace') },
-        { id: 'nav-settings', label: 'Go to Settings', icon: Settings, section: 'Navigation', action: () => setActiveTab('settings') },
-        { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: PanelLeft, section: 'View', action: () => setSidebarCollapsed(p => !p) },
+        { id: 'nav-agents', label: 'Go to Agents', icon: Bot, section: 'Navigation', action: () => setActiveTab('agents') },
+        { id: 'nav-context', label: 'Go to Context', icon: FileText, section: 'Navigation', action: () => setActiveTab('context') },
+        { id: 'nav-connect', label: 'Go to Connect', icon: Database, section: 'Navigation', action: () => setActiveTab('connect') },
+        { id: 'export-project', label: 'Export .orbitae', icon: Download, section: 'Project', action: handleExport },
+        { id: 'import-project', label: 'Import .orbitae', icon: Upload, section: 'Project', action: handleImport },
         { id: 'close-project', label: 'Close Project', icon: FolderOpen, section: 'Project', action: onClose },
-    ], [onClose]);
+    ], [onClose, handleExport, handleImport]);
 
     const filteredActions = useMemo(() => {
         if (!paletteQuery.trim()) return commandActions;
         const q = paletteQuery.toLowerCase();
-        return commandActions.filter(a => a.label.toLowerCase().includes(q) || a.section.toLowerCase().includes(q));
+        return commandActions.filter(a => a.label.toLowerCase().includes(q));
     }, [paletteQuery, commandActions]);
 
-    useEffect(() => {
-        setPaletteIndex(0);
-    }, [paletteQuery]);
+    useEffect(() => { setPaletteIndex(0); }, [paletteQuery]);
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -79,24 +101,22 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                 setPaletteOpen(prev => !prev);
                 setPaletteQuery('');
             }
-            if ((e.metaKey || e.ctrlKey) && e.key === 't') {
-                e.preventDefault();
-                setActiveTab('terminal');
-            }
-            if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '5') {
+            if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '3') {
                 e.preventDefault();
                 const idx = parseInt(e.key) - 1;
-                if (NAV_ITEMS[idx]) setActiveTab(NAV_ITEMS[idx].id);
+                if (TABS[idx]) setActiveTab(TABS[idx].id);
+            }
+            if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
+                e.preventDefault();
+                handleExport();
             }
         };
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, []);
+    }, [handleExport]);
 
     useEffect(() => {
-        if (paletteOpen) {
-            setTimeout(() => paletteInputRef.current?.focus(), 50);
-        }
+        if (paletteOpen) setTimeout(() => paletteInputRef.current?.focus(), 50);
     }, [paletteOpen]);
 
     const executePaletteAction = useCallback((action: CommandAction) => {
@@ -122,133 +142,98 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
 
     const panelContent = useMemo(() => {
         switch (activeTab) {
-            case 'command-center':
-                return <CommandCenterPanel project={project} onNavigate={handleNavigate} />;
-            case 'agent':
-                return <AgentPanel projectId={project.id} project={project} onNavigate={handleNavigate} />;
-            case 'terminal':
+            case 'agents':
                 return <TerminalTab projectId={project.id} projectPath={project.path} />;
-            case 'workspace':
-                return <WorkspacePanel projectId={project.id} projectPath={project.path} />;
-            case 'settings':
-                return <SettingsPanel projectId={project.id} />;
+            case 'context':
+                return <ContextPanel projectId={project.id} projectPath={project.path} />;
+            case 'connect':
+                return <ConnectPanel projectId={project.id} projectPath={project.path} />;
             default:
                 return null;
         }
-    }, [activeTab, project, handleNavigate]);
+    }, [activeTab, project]);
 
     return (
-        <div className="flex flex-col h-screen bg-background">
-            {/* Title bar — breadcrumb navigation */}
-            <header className="h-11 shrink-0 border-b border-border/40 bg-background flex items-center justify-between px-4 select-none">
+        <div className="flex flex-col h-screen bg-[#0a0a0b]">
+            {/* Top bar */}
+            <header className="h-11 shrink-0 border-b border-white/[0.06] flex items-center justify-between px-4 select-none">
                 <div className="flex items-center gap-3">
                     <button
                         onClick={onClose}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        className="flex items-center gap-1.5 text-[11px] text-[#71717a] hover:text-[#e4e4e7] transition-colors duration-150"
                     >
                         <ChevronLeft className="w-3.5 h-3.5" />
                         Projects
                     </button>
-                    <span className="text-border/60">/</span>
-                    <span className="text-sm font-medium flex items-center gap-2 text-foreground/90">
-                        <FolderOpen className="w-4 h-4 text-primary" />
+                    <span className="text-white/10">/</span>
+                    <span className="text-[13px] font-medium flex items-center gap-2 text-[#e4e4e7]">
+                        <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
                         {project.name}
                     </span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/40">
-                        {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}K
-                    </kbd>
-                </div>
+                <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#71717a] border border-white/[0.06]">
+                    {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}K
+                </kbd>
             </header>
 
-            <div className="flex-1 overflow-hidden flex flex-row">
-                {/* Sidebar */}
-                <nav className={`${sidebarCollapsed ? 'w-14' : 'w-52'} shrink-0 border-r border-border/30 bg-muted/5 flex flex-col transition-all duration-200`}>
-                    <div className="flex-1 py-3 px-2 space-y-1">
-                        {NAV_ITEMS.map((item) => {
-                            const Icon = item.icon;
-                            const isActive = activeTab === item.id;
-                            return (
-                                <button
-                                    key={item.id}
-                                    onClick={() => setActiveTab(item.id)}
-                                    title={sidebarCollapsed ? item.label : undefined}
-                                    className={`w-full flex items-center gap-3 rounded-lg text-xs font-medium transition-all duration-150 ${
-                                        sidebarCollapsed ? 'justify-center p-2.5' : 'px-3 py-2.5'
-                                    } ${
-                                        isActive
-                                            ? 'bg-primary/10 text-primary shadow-sm shadow-primary/5'
-                                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                                    }`}
-                                >
-                                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : ''}`} />
-                                    {!sidebarCollapsed && (
-                                        <div className="text-left min-w-0">
-                                            <div className={`text-[13px] leading-tight ${isActive ? 'font-semibold' : 'font-medium'}`}>
-                                                {item.label}
-                                            </div>
-                                            <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-                                                {item.description}
-                                            </div>
-                                        </div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <button
-                        onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                        className="p-3 border-t border-border/30 text-muted-foreground/40 hover:text-muted-foreground transition-colors flex items-center justify-center"
-                        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                    >
-                        {sidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-                    </button>
-                </nav>
-
-                {/* Panel */}
-                <div className="flex-1 overflow-hidden bg-background relative">
-                    <ErrorBoundary key={activeTab}>
-                        {panelContent}
-                    </ErrorBoundary>
-                </div>
+            {/* Tab bar */}
+            <div className="shrink-0 border-b border-white/[0.06] flex items-center justify-center gap-1 px-4 py-1.5">
+                {TABS.map((tab, idx) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all duration-150 ${
+                                isActive
+                                    ? 'bg-white/[0.08] text-[#e4e4e7]'
+                                    : 'text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04]'
+                            }`}
+                        >
+                            <Icon className="w-3.5 h-3.5" />
+                            {tab.label}
+                            <kbd className="text-[9px] text-[#52525b] ml-1">{idx + 1}</kbd>
+                        </button>
+                    );
+                })}
             </div>
 
-            {/* Command palette — fixed overlay */}
+            {/* Panel */}
+            <div className="flex-1 overflow-hidden">
+                <ErrorBoundary key={activeTab}>
+                    {panelContent}
+                </ErrorBoundary>
+            </div>
+
+            {/* Command palette */}
             {paletteOpen && (
                 <div
                     className="fixed inset-0 z-[9999] flex items-start justify-center pt-[20vh]"
                     onClick={() => setPaletteOpen(false)}
-                    onKeyDown={(e) => {
-                        e.stopPropagation();
-                        if (e.key === 'Escape') setPaletteOpen(false);
-                    }}
                 >
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
                     <div
-                        className="relative w-full max-w-lg bg-background border border-border rounded-xl shadow-2xl overflow-hidden"
+                        className="relative w-full max-w-md bg-[#141417] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden"
                         onClick={e => e.stopPropagation()}
                     >
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40">
-                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
+                            <Search className="w-4 h-4 text-[#71717a] shrink-0" />
                             <input
                                 ref={paletteInputRef}
                                 type="text"
                                 value={paletteQuery}
                                 onChange={e => setPaletteQuery(e.target.value)}
-                                onKeyDown={(e) => {
-                                    e.stopPropagation();
-                                    handlePaletteKeyDown(e);
-                                }}
+                                onKeyDown={e => { e.stopPropagation(); handlePaletteKeyDown(e); }}
                                 placeholder="Type a command..."
-                                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+                                className="flex-1 bg-transparent text-[13px] text-[#e4e4e7] outline-none placeholder:text-[#52525b]"
                                 autoFocus
                             />
-                            <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/40">ESC</kbd>
+                            <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#71717a]">ESC</kbd>
                         </div>
                         <div className="max-h-64 overflow-y-auto py-1">
                             {filteredActions.length === 0 && (
-                                <p className="text-sm text-muted-foreground text-center py-6">No matching commands</p>
+                                <p className="text-[13px] text-[#71717a] text-center py-6">No matching commands</p>
                             )}
                             {filteredActions.map((action, idx) => {
                                 const Icon = action.icon;
@@ -256,13 +241,13 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                                     <button
                                         key={action.id}
                                         onClick={() => executePaletteAction(action)}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                                            idx === paletteIndex ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted/50'
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-[13px] transition-colors duration-150 ${
+                                            idx === paletteIndex ? 'bg-blue-500/10 text-blue-400' : 'text-[#e4e4e7] hover:bg-white/[0.04]'
                                         }`}
                                     >
                                         <Icon className="w-4 h-4 shrink-0" />
                                         <span className="flex-1 text-left">{action.label}</span>
-                                        <span className="text-[10px] text-muted-foreground/50">{action.section}</span>
+                                        <span className="text-[10px] text-[#52525b]">{action.section}</span>
                                     </button>
                                 );
                             })}

@@ -32,15 +32,6 @@ struct QueryDatabaseParam {
     query: String,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct SearchKnowledgeParam {
-    /// The project ID
-    project_id: String,
-    /// Search query
-    query: String,
-    /// Filter by node kind (optional)
-    kind: Option<String>,
-}
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ReadNotesParam {
@@ -84,20 +75,8 @@ impl OrbitaeMcpServer {
         let envs = repo.get_project_envs(&params.project_id).await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-        let snippets = repo.get_project_snippets(&params.project_id).await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
         let notes = repo.get_project_notes(&params.project_id).await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let links = repo.get_project_links(&params.project_id).await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let git_status = app_lib::modules::git::get_git_status(&project.path).ok().flatten();
-
-        let knowledge = app_lib::modules::knowledge::repository::KnowledgeRepository::new((*self.pool).clone())
-            .get_project_nodes(&params.project_id).await
-            .unwrap_or_default();
 
         let context = json!({
             "project": {
@@ -106,11 +85,7 @@ impl OrbitaeMcpServer {
                 "path": project.path,
             },
             "environment_variables": envs.iter().map(|e| json!({"key": e.key, "value": e.value})).collect::<Vec<_>>(),
-            "snippets": snippets.iter().map(|s| json!({"label": s.label, "command": s.command, "description": s.description})).collect::<Vec<_>>(),
             "notes": notes.iter().map(|n| json!({"title": n.title, "content": n.content.chars().take(500).collect::<String>(), "kind": n.kind})).collect::<Vec<_>>(),
-            "links": links.iter().map(|l| json!({"title": l.title, "url": l.url, "kind": l.kind})).collect::<Vec<_>>(),
-            "git": git_status,
-            "knowledge_nodes": knowledge.iter().take(20).map(|n| json!({"title": n.title, "kind": n.kind, "content": n.content.chars().take(300).collect::<String>()})).collect::<Vec<_>>(),
         });
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -169,33 +144,6 @@ impl OrbitaeMcpServer {
 
         let result = db_service.execute_query(&connection.kind, &connection.details, &params.query, password.as_deref()).await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        )]))
-    }
-
-    #[tool(description = "Search the project's knowledge graph for relevant information about architecture, conventions, decisions, runbooks, etc.")]
-    async fn search_knowledge(
-        &self,
-        rmcp::handler::server::wrapper::Parameters(params): rmcp::handler::server::wrapper::Parameters<SearchKnowledgeParam>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let service = app_lib::modules::knowledge::service::KnowledgeService::new((*self.pool).clone());
-
-        let nodes = if params.kind.is_some() {
-            service.search_nodes(&params.project_id, Some(&params.query), params.kind.as_deref(), Some("active"), Some(10)).await
-        } else {
-            service.build_context(&params.project_id, &params.query, 10).await
-        }.map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let result: Vec<_> = nodes.iter().map(|n| json!({
-            "id": n.id,
-            "title": n.title,
-            "kind": n.kind,
-            "content": n.content,
-            "status": n.status,
-            "tags": n.tags,
-        })).collect();
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default()
