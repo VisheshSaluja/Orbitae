@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
     Play, Square, Bot, Zap, Monitor, ExternalLink,
     Plus, RefreshCw, Clock, FileCode, GitBranch,
-    X, Eye,
+    X, Eye, Globe, ChevronDown, ChevronRight,
 } from 'lucide-react';
 
 interface AgentSession {
@@ -27,6 +27,13 @@ interface SessionDiff {
     stat_summary: string;
     changed_files: string[];
     file_stats: FileDiffStat[];
+}
+
+interface ListeningPort {
+    port: number;
+    pid: number;
+    process: string;
+    is_project: boolean;
 }
 
 interface SessionsTabProps {
@@ -54,10 +61,11 @@ function formatElapsed(createdAt: string): string {
 
 export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
-    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [showLauncher, setShowLauncher] = useState(false);
     const [isLaunching, setIsLaunching] = useState(false);
     const [diff, setDiff] = useState<SessionDiff | null>(null);
+    const [ports, setPorts] = useState<ListeningPort[]>([]);
+    const [portsExpanded, setPortsExpanded] = useState(true);
 
     const [selectedAgent, setSelectedAgent] = useState('claude');
     const [agentCount, setAgentCount] = useState(1);
@@ -66,15 +74,11 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const loadSessions = useCallback(async () => {
         try {
             const data = await invokeCommand<AgentSession[]>('list_agent_sessions', {});
-            const projectSessions = data.filter(s => s.project_id === projectId);
-            setSessions(projectSessions);
-            if (!selectedSessionId && projectSessions.length > 0) {
-                setSelectedSessionId(projectSessions[0].id);
-            }
+            setSessions(data.filter(s => s.project_id === projectId));
         } catch {
             // non-critical
         }
-    }, [projectId, selectedSessionId]);
+    }, [projectId]);
 
     const loadDiff = useCallback(async () => {
         try {
@@ -85,12 +89,22 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     }, [projectPath]);
 
+    const loadPorts = useCallback(async () => {
+        try {
+            const p = await invokeCommand<ListeningPort[]>('scan_listening_ports', { projectPath });
+            setPorts(p);
+        } catch {
+            setPorts([]);
+        }
+    }, [projectPath]);
+
     useEffect(() => {
         loadSessions();
         loadDiff();
-        const interval = setInterval(() => { loadSessions(); loadDiff(); }, 5000);
+        loadPorts();
+        const interval = setInterval(() => { loadSessions(); loadDiff(); loadPorts(); }, 5000);
         return () => clearInterval(interval);
-    }, [loadSessions, loadDiff]);
+    }, [loadSessions, loadDiff, loadPorts]);
 
     const handleLaunch = async () => {
         setIsLaunching(true);
@@ -104,7 +118,6 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                 injectContext,
             });
             setSessions(prev => [...prev, ...newSessions]);
-            if (newSessions.length > 0) setSelectedSessionId(newSessions[0].id);
             setShowLauncher(false);
             toast.success(`Launched ${newSessions.length} session(s)`);
         } catch (err) {
@@ -126,22 +139,12 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
-    const handleCloseTab = async (sessionId: string) => {
-        try {
-            const session = sessions.find(s => s.id === sessionId);
-            if (session?.status === 'running') {
-                await invokeCommand('stop_agent_session', { sessionId });
-            }
-        } catch {
-            // still remove from list even if stop fails
+    const handleRemove = async (sessionId: string) => {
+        const session = sessions.find(s => s.id === sessionId);
+        if (session?.status === 'running') {
+            try { await invokeCommand('stop_agent_session', { sessionId }); } catch { /* continue */ }
         }
-        setSessions(prev => {
-            const remaining = prev.filter(s => s.id !== sessionId);
-            if (selectedSessionId === sessionId) {
-                setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
-            }
-            return remaining;
-        });
+        setSessions(prev => prev.filter(s => s.id !== sessionId));
     };
 
     const handleFocus = async () => {
@@ -160,240 +163,236 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
-    const selectedSession = sessions.find(s => s.id === selectedSessionId);
+    const runningSessions = sessions.filter(s => s.status === 'running');
+    const stoppedSessions = sessions.filter(s => s.status !== 'running');
     const totalAdditions = diff?.file_stats.reduce((sum, f) => sum + f.additions, 0) ?? 0;
     const totalDeletions = diff?.file_stats.reduce((sum, f) => sum + f.deletions, 0) ?? 0;
-
-    // Empty state
-    if (sessions.length === 0 && !showLauncher) {
-        return (
-            <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                <div className="w-14 h-14 rounded-2xl bg-foreground/6 flex items-center justify-center mb-5">
-                    <Bot className="w-6 h-6 text-muted-foreground" />
-                </div>
-                <h3 className="text-sm font-semibold text-foreground mb-1.5">Launch AI Agents</h3>
-                <p className="text-[12px] text-muted-foreground max-w-xs mb-6 leading-relaxed">
-                    Spawn Claude Code, Codex, or custom terminal sessions that run in native windows with your project context.
-                </p>
-                <button
-                    onClick={() => setShowLauncher(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150"
-                >
-                    <Plus className="w-4 h-4" />
-                    New Session
-                </button>
-            </div>
-        );
-    }
+    const projectPorts = ports.filter(p => p.is_project);
+    const otherPorts = ports.filter(p => !p.is_project);
 
     return (
-        <div className="h-full flex flex-col">
-            {/* Session strip — horizontal tabs */}
-            <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-border overflow-x-auto hide-scrollbar">
-                {sessions.map(session => {
-                    const config = getAgentConfig(session.agent_type);
-                    const isSelected = session.id === selectedSessionId;
-                    const isRunning = session.status === 'running';
-                    return (
+        <div className="h-full flex">
+            {/* Main content — scrollable dashboard */}
+            <div className="flex-1 overflow-y-auto hide-scrollbar">
+                <div className="max-w-3xl mx-auto p-6 space-y-6">
+                    {/* Quick actions bar */}
+                    <div className="flex items-center gap-2 flex-wrap">
                         <button
-                            key={session.id}
-                            onClick={() => setSelectedSessionId(session.id)}
-                            className={`group shrink-0 flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md text-[12px] font-medium transition-all duration-100 ${
-                                isSelected
-                                    ? 'bg-foreground/8 text-foreground'
-                                    : 'text-muted-foreground hover:text-foreground hover:bg-foreground/4'
-                            }`}
+                            onClick={() => setShowLauncher(!showLauncher)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors"
                         >
-                            {/* Agent-colored dot */}
-                            <span className="relative flex items-center justify-center w-4 h-4 shrink-0">
-                                {isRunning && (
-                                    <span className={`absolute w-3 h-3 rounded-full ${config.accent} opacity-20 animate-ping`} />
-                                )}
-                                <span className={`relative w-1.5 h-1.5 rounded-full ${isRunning ? config.accent : 'bg-muted-foreground/30'}`} />
-                            </span>
-                            <span>{session.display_name}</span>
+                            <Plus className="w-3.5 h-3.5" />
+                            New Session
+                        </button>
+                        {runningSessions.length > 0 && (
                             <button
-                                onClick={(e) => { e.stopPropagation(); handleCloseTab(session.id); }}
-                                className="ml-0.5 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-foreground/10 text-muted-foreground hover:text-foreground transition-all"
-                                title="Close"
+                                onClick={handleFocus}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-foreground/4 transition-colors"
                             >
-                                <X className="w-3 h-3" />
+                                <Eye className="w-3.5 h-3.5" />
+                                Show Terminals
                             </button>
+                        )}
+                        <button
+                            onClick={handleOpenEditor}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-foreground/4 transition-colors"
+                        >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Open in Editor
                         </button>
-                    );
-                })}
-
-                <button
-                    onClick={() => setShowLauncher(!showLauncher)}
-                    className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-foreground/4 transition-colors"
-                    title="New session"
-                >
-                    <Plus className="w-3.5 h-3.5" />
-                </button>
-
-                <div className="flex-1" />
-
-                <button
-                    onClick={loadSessions}
-                    className="shrink-0 p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-foreground/4 transition-colors"
-                    title="Refresh"
-                >
-                    <RefreshCw className="w-3 h-3" />
-                </button>
-            </div>
-
-            {/* Launch panel */}
-            {showLauncher && (
-                <div className="shrink-0 border-b border-border bg-card p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                        <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Launch Agent</span>
-                        <button onClick={() => setShowLauncher(false)} className="p-1 rounded hover:bg-foreground/6 text-muted-foreground">
-                            <X className="w-3.5 h-3.5" />
+                        <div className="flex-1" />
+                        <button
+                            onClick={() => { loadSessions(); loadDiff(); loadPorts(); }}
+                            className="p-2 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-foreground/4 transition-colors"
+                            title="Refresh"
+                        >
+                            <RefreshCw className="w-3.5 h-3.5" />
                         </button>
                     </div>
-                    <div className="flex items-center gap-2">
-                        {AGENT_TYPES.map(agent => {
-                            const Icon = agent.icon;
-                            return (
-                                <button
-                                    key={agent.id}
-                                    onClick={() => setSelectedAgent(agent.id)}
-                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
-                                        selectedAgent === agent.id
-                                            ? `${agent.accentMuted} ${agent.accentText}`
-                                            : 'bg-foreground/4 text-muted-foreground hover:text-foreground'
-                                    }`}
-                                >
-                                    <Icon className="w-3.5 h-3.5" />
-                                    {agent.label}
+
+                    {/* Launch panel */}
+                    {showLauncher && (
+                        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wider">Launch Agent</span>
+                                <button onClick={() => setShowLauncher(false)} className="p-1 rounded hover:bg-foreground/6 text-muted-foreground">
+                                    <X className="w-3.5 h-3.5" />
                                 </button>
-                            );
-                        })}
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-muted-foreground">Count:</span>
-                            <div className="flex gap-1">
-                                {[1, 2, 3, 4, 5, 6].map(n => (
-                                    <button
-                                        key={n}
-                                        onClick={() => setAgentCount(n)}
-                                        className={`w-7 h-7 rounded-md text-[11px] font-medium tabular-nums transition-all ${
-                                            agentCount === n
-                                                ? 'bg-foreground text-background'
-                                                : 'bg-foreground/4 text-muted-foreground hover:bg-foreground/8 hover:text-foreground'
-                                        }`}
-                                    >
-                                        {n}
-                                    </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {AGENT_TYPES.map(agent => {
+                                    const Icon = agent.icon;
+                                    return (
+                                        <button
+                                            key={agent.id}
+                                            onClick={() => setSelectedAgent(agent.id)}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+                                                selectedAgent === agent.id
+                                                    ? `${agent.accentMuted} ${agent.accentText}`
+                                                    : 'bg-foreground/4 text-muted-foreground hover:text-foreground'
+                                            }`}
+                                        >
+                                            <Icon className="w-3.5 h-3.5" />
+                                            {agent.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-muted-foreground">Count:</span>
+                                    <div className="flex gap-1">
+                                        {[1, 2, 3, 4, 5, 6].map(n => (
+                                            <button
+                                                key={n}
+                                                onClick={() => setAgentCount(n)}
+                                                className={`w-7 h-7 rounded-md text-[11px] font-medium tabular-nums transition-all ${
+                                                    agentCount === n
+                                                        ? 'bg-foreground text-background'
+                                                        : 'bg-foreground/4 text-muted-foreground hover:bg-foreground/8 hover:text-foreground'
+                                                }`}
+                                            >
+                                                {n}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={injectContext}
+                                        onChange={e => setInjectContext(e.target.checked)}
+                                        className="rounded border-border accent-foreground w-3.5 h-3.5"
+                                    />
+                                    <span className="text-[11px] text-muted-foreground">Inject context</span>
+                                </label>
+                            </div>
+                            <button
+                                onClick={handleLaunch}
+                                disabled={isLaunching}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150 disabled:opacity-50"
+                            >
+                                {isLaunching ? 'Launching...' : (
+                                    <><Play className="w-3.5 h-3.5" /> Launch {agentCount} {getAgentConfig(selectedAgent).label} Session{agentCount > 1 ? 's' : ''}</>
+                                )}
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Running sessions */}
+                    {runningSessions.length > 0 && (
+                        <div>
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Active Sessions</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium tabular-nums">{runningSessions.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                                {runningSessions.map(session => (
+                                    <SessionRow
+                                        key={session.id}
+                                        session={session}
+                                        onStop={handleStop}
+                                        onRemove={handleRemove}
+                                        onFocus={handleFocus}
+                                    />
                                 ))}
                             </div>
                         </div>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={injectContext}
-                                onChange={e => setInjectContext(e.target.checked)}
-                                className="rounded border-border accent-foreground w-3.5 h-3.5"
-                            />
-                            <span className="text-[11px] text-muted-foreground">Inject context</span>
-                        </label>
-                    </div>
-                    <button
-                        onClick={handleLaunch}
-                        disabled={isLaunching}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors duration-150 disabled:opacity-50"
-                    >
-                        {isLaunching ? 'Launching...' : (
-                            <><Play className="w-3.5 h-3.5" /> Launch {agentCount} {getAgentConfig(selectedAgent).label} Session{agentCount > 1 ? 's' : ''}</>
-                        )}
-                    </button>
-                </div>
-            )}
+                    )}
 
-            {/* Main content area */}
-            <div className="flex-1 flex min-h-0">
-                {/* Session detail */}
-                <div className="flex-1 min-w-0 overflow-y-auto p-6">
-                    {selectedSession ? (
-                        <div className="max-w-2xl mx-auto space-y-5">
-                            {/* Session header card */}
-                            <div className="rounded-lg border border-border bg-card p-5">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-10 h-10 rounded-lg ${getAgentConfig(selectedSession.agent_type).accentMuted} flex items-center justify-center`}>
-                                            {React.createElement(getAgentConfig(selectedSession.agent_type).icon, {
-                                                className: `w-5 h-5 ${getAgentConfig(selectedSession.agent_type).accentText}`
-                                            })}
-                                        </div>
-                                        <div>
-                                            <h3 className="text-sm font-semibold text-foreground">{selectedSession.display_name}</h3>
-                                            <span className="text-[11px] text-muted-foreground">{getAgentConfig(selectedSession.agent_type).label}</span>
-                                        </div>
-                                    </div>
-                                    {selectedSession.status === 'running' ? (
-                                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-medium">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                            Running
-                                        </span>
-                                    ) : (
-                                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-foreground/4 text-muted-foreground text-[10px] font-medium">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
-                                            Stopped
-                                        </span>
-                                    )}
-                                </div>
-
-                                <div className="flex items-center gap-4 text-[12px] text-muted-foreground">
-                                    <div className="flex items-center gap-1.5">
-                                        <Clock className="w-3.5 h-3.5" />
-                                        <span>{formatElapsed(selectedSession.created_at)}</span>
-                                    </div>
-                                    {selectedSession.pid && (
-                                        <span className="font-mono text-[11px]">Window #{selectedSession.pid}</span>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Actions */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                                {selectedSession.status === 'running' && (
-                                    <>
-                                        <button
-                                            onClick={handleFocus}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-all duration-150"
-                                        >
-                                            <Eye className="w-3.5 h-3.5" />
-                                            Open Terminal
-                                        </button>
-                                        <button
-                                            onClick={() => handleStop(selectedSession.id)}
-                                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-destructive hover:bg-destructive/10 border border-border hover:border-destructive/20 transition-all duration-150"
-                                        >
-                                            <Square className="w-3.5 h-3.5" />
-                                            Stop
-                                        </button>
-                                    </>
-                                )}
-                                <button
-                                    onClick={handleOpenEditor}
-                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/5 border border-border transition-all duration-150"
-                                >
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                    Open in Editor
-                                </button>
+                    {/* Stopped sessions */}
+                    {stoppedSessions.length > 0 && (
+                        <div>
+                            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3 block">Recent Sessions</span>
+                            <div className="space-y-1">
+                                {stoppedSessions.slice(0, 5).map(session => (
+                                    <SessionRow
+                                        key={session.id}
+                                        session={session}
+                                        onStop={handleStop}
+                                        onRemove={handleRemove}
+                                        onFocus={handleFocus}
+                                    />
+                                ))}
                             </div>
                         </div>
-                    ) : (
-                        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                            Select a session to view details
+                    )}
+
+                    {/* Empty state */}
+                    {sessions.length === 0 && !showLauncher && (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                            <div className="w-14 h-14 rounded-2xl bg-foreground/[0.04] flex items-center justify-center mb-5">
+                                <Bot className="w-6 h-6 text-muted-foreground/40" />
+                            </div>
+                            <h3 className="text-sm font-semibold text-foreground mb-1.5">Launch AI Agents</h3>
+                            <p className="text-[12px] text-muted-foreground max-w-xs mb-6 leading-relaxed">
+                                Spawn Claude Code, Codex, or custom terminal sessions that run in native windows with your project context.
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Right sidebar — ports + changes */}
+            <div className="w-64 shrink-0 border-l border-border flex flex-col bg-muted/10 overflow-y-auto hide-scrollbar">
+                {/* Ports section */}
+                <div>
+                    <button
+                        onClick={() => setPortsExpanded(!portsExpanded)}
+                        className="w-full px-3 py-2.5 border-b border-border flex items-center justify-between hover:bg-foreground/[0.02] transition-colors"
+                    >
+                        <div className="flex items-center gap-2">
+                            <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-[12px] font-semibold text-muted-foreground">Ports</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {ports.length > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/6 text-muted-foreground tabular-nums">{ports.length}</span>
+                            )}
+                            {portsExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground/40" /> : <ChevronRight className="w-3 h-3 text-muted-foreground/40" />}
+                        </div>
+                    </button>
+                    {portsExpanded && (
+                        <div className="py-1">
+                            {projectPorts.length > 0 && (
+                                <div className="px-3 py-1.5">
+                                    <span className="text-[9px] font-semibold text-muted-foreground/40 uppercase tracking-wider">Project</span>
+                                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                        {projectPorts.map(p => (
+                                            <span key={p.port} className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 text-[11px] font-mono font-medium" title={`${p.process} (PID ${p.pid})`}>
+                                                {p.port}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {otherPorts.length > 0 && (
+                                <div className="px-3 py-1.5">
+                                    <span className="text-[9px] font-semibold text-muted-foreground/40 uppercase tracking-wider">System</span>
+                                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                        {otherPorts.slice(0, 20).map(p => (
+                                            <span key={p.port} className="inline-flex items-center px-2 py-1 rounded bg-foreground/[0.04] text-muted-foreground/60 text-[11px] font-mono" title={`${p.process} (PID ${p.pid})`}>
+                                                {p.port}
+                                            </span>
+                                        ))}
+                                        {otherPorts.length > 20 && (
+                                            <span className="text-[10px] text-muted-foreground/30 self-center">+{otherPorts.length - 20}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                            {ports.length === 0 && (
+                                <div className="px-3 py-4 text-center">
+                                    <p className="text-[10px] text-muted-foreground/30">No listening ports</p>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
 
-                {/* Changes sidebar */}
-                <div className="w-64 shrink-0 border-l border-border bg-muted/20 flex flex-col">
-                    <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
+                {/* Changes section */}
+                <div>
+                    <div className="px-3 py-2.5 border-b border-t border-border flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
                             <span className="text-[12px] font-semibold text-muted-foreground">Changes</span>
@@ -405,42 +404,110 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                             </div>
                         )}
                     </div>
-                    <div className="flex-1 overflow-y-auto hide-scrollbar">
+                    <div className="py-1">
                         {diff && diff.file_stats.length > 0 ? (
-                            <div className="py-1">
-                                {diff.file_stats.map((file) => {
-                                    const parts = file.file.split('/');
-                                    const fileName = parts.pop() ?? file.file;
-                                    const dirPath = parts.join('/');
-                                    return (
-                                        <div
-                                            key={file.file}
-                                            className="flex items-center gap-2 px-3 py-1.5 hover:bg-foreground/3 transition-colors"
-                                        >
-                                            <FileCode className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
-                                            <div className="flex-1 min-w-0">
-                                                <span className="text-[12px] text-foreground/80 truncate block">{fileName}</span>
-                                                {dirPath && (
-                                                    <span className="text-[10px] text-muted-foreground/40 truncate block font-mono">{dirPath}/</span>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-1 shrink-0 font-mono text-[10px] tabular-nums">
-                                                {file.additions > 0 && <span className="text-emerald-500">+{file.additions}</span>}
-                                                {file.deletions > 0 && <span className="text-red-400">-{file.deletions}</span>}
-                                            </div>
+                            diff.file_stats.map((file) => {
+                                const parts = file.file.split('/');
+                                const fileName = parts.pop() ?? file.file;
+                                const dirPath = parts.join('/');
+                                return (
+                                    <div
+                                        key={file.file}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-foreground/[0.02] transition-colors"
+                                    >
+                                        <FileCode className="w-3.5 h-3.5 text-muted-foreground/30 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <span className="text-[12px] text-foreground/80 truncate block">{fileName}</span>
+                                            {dirPath && (
+                                                <span className="text-[10px] text-muted-foreground/30 truncate block font-mono">{dirPath}/</span>
+                                            )}
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                        <div className="flex items-center gap-1 shrink-0 font-mono text-[10px] tabular-nums">
+                                            {file.additions > 0 && <span className="text-emerald-500">+{file.additions}</span>}
+                                            {file.deletions > 0 && <span className="text-red-400">-{file.deletions}</span>}
+                                        </div>
+                                    </div>
+                                );
+                            })
                         ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-center px-4">
-                                <GitBranch className="w-5 h-5 text-muted-foreground/20 mb-2" />
-                                <p className="text-[11px] text-muted-foreground/40">No uncommitted changes</p>
-                                <p className="text-[10px] text-muted-foreground/25 mt-1">Changes appear here as agents work</p>
+                            <div className="flex flex-col items-center justify-center py-8 text-center px-4">
+                                <GitBranch className="w-4 h-4 text-muted-foreground/15 mb-2" />
+                                <p className="text-[10px] text-muted-foreground/30">No uncommitted changes</p>
                             </div>
                         )}
                     </div>
                 </div>
+            </div>
+        </div>
+    );
+};
+
+interface SessionRowProps {
+    session: AgentSession;
+    onStop: (id: string) => void;
+    onRemove: (id: string) => void;
+    onFocus: () => void;
+}
+
+const SessionRow: React.FC<SessionRowProps> = ({ session, onStop, onRemove, onFocus }) => {
+    const config = getAgentConfig(session.agent_type);
+    const isRunning = session.status === 'running';
+    const Icon = config.icon;
+
+    return (
+        <div className="group flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border hover:bg-foreground/[0.02] transition-all duration-100">
+            <div className={`w-8 h-8 rounded-lg ${config.accentMuted} flex items-center justify-center shrink-0 relative`}>
+                <Icon className={`w-4 h-4 ${config.accentText}`} />
+                {isRunning && (
+                    <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${config.accent} border-2 border-background`} />
+                )}
+            </div>
+
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-medium text-foreground truncate">{session.display_name}</span>
+                    <span className="text-[10px] text-muted-foreground/50">{config.label}</span>
+                </div>
+                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground/50">
+                    <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatElapsed(session.created_at)}
+                    </span>
+                    {isRunning && (
+                        <span className="flex items-center gap-1 text-emerald-400/60">
+                            <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                            running
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                {isRunning && (
+                    <>
+                        <button
+                            onClick={onFocus}
+                            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/6 transition-colors"
+                            title="Show terminal"
+                        >
+                            <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                            onClick={() => onStop(session.id)}
+                            className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            title="Stop"
+                        >
+                            <Square className="w-3.5 h-3.5" />
+                        </button>
+                    </>
+                )}
+                <button
+                    onClick={() => onRemove(session.id)}
+                    className="p-1.5 rounded-md text-muted-foreground/40 hover:text-muted-foreground hover:bg-foreground/6 transition-colors"
+                    title="Remove"
+                >
+                    <X className="w-3 h-3" />
+                </button>
             </div>
         </div>
     );
