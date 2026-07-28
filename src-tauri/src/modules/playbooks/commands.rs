@@ -76,6 +76,108 @@ pub async fn export_playbook_yaml(
     serde_yaml::to_string(&yaml_doc).map_err(|e| e.to_string())
 }
 
+/// Scan a project directory for discoverable commands (package.json scripts,
+/// Makefile targets, docker-compose services, etc.) and return them as
+/// structured suggestions for auto-generating a runbook.
+#[command]
+pub async fn scan_project_commands(
+    project_path: String,
+) -> Result<Vec<DiscoveredCommand>, String> {
+    let expanded = crate::shared::utils::expand_path(&project_path);
+    let root = std::path::Path::new(&expanded);
+    let mut commands: Vec<DiscoveredCommand> = Vec::new();
+
+    // package.json scripts
+    let pkg_path = root.join("package.json");
+    if pkg_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
+                    for (name, cmd) in scripts {
+                        commands.push(DiscoveredCommand {
+                            name: name.clone(),
+                            command: format!("npm run {}", name),
+                            source: "package.json".to_string(),
+                            raw_command: cmd.as_str().unwrap_or("").to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Makefile targets
+    let makefile_path = root.join("Makefile");
+    if makefile_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&makefile_path) {
+            for line in content.lines() {
+                if let Some(target) = line.strip_suffix(':') {
+                    let target = target.trim();
+                    if !target.is_empty() && !target.starts_with('.') && !target.contains(' ') {
+                        commands.push(DiscoveredCommand {
+                            name: target.to_string(),
+                            command: format!("make {}", target),
+                            source: "Makefile".to_string(),
+                            raw_command: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // docker-compose services
+    for dc_name in &["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
+        let dc_path = root.join(dc_name);
+        if dc_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&dc_path) {
+                if let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(&content) {
+                    if let Some(services) = yaml.get("services").and_then(|s| s.as_object()) {
+                        for svc_name in services.keys() {
+                            commands.push(DiscoveredCommand {
+                                name: format!("{} (up)", svc_name),
+                                command: format!("docker compose up {}", svc_name),
+                                source: dc_name.to_string(),
+                                raw_command: String::new(),
+                            });
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    // Cargo.toml (Rust projects)
+    let cargo_path = root.join("Cargo.toml");
+    if cargo_path.exists() {
+        for (name, cmd) in &[
+            ("build", "cargo build"),
+            ("test", "cargo test"),
+            ("run", "cargo run"),
+            ("check", "cargo check"),
+            ("clippy", "cargo clippy"),
+        ] {
+            commands.push(DiscoveredCommand {
+                name: name.to_string(),
+                command: cmd.to_string(),
+                source: "Cargo.toml".to_string(),
+                raw_command: String::new(),
+            });
+        }
+    }
+
+    Ok(commands)
+}
+
+#[derive(serde::Serialize)]
+pub struct DiscoveredCommand {
+    pub name: String,
+    pub command: String,
+    pub source: String,
+    pub raw_command: String,
+}
+
 /// Imports a playbook from a YAML string into a project.
 #[command]
 pub async fn import_playbook_yaml(

@@ -70,6 +70,15 @@ impl AgentSessionRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    /// Delete a session record.
+    pub async fn delete(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// List all sessions, most recent first.
     pub async fn list_all(&self) -> Result<Vec<AgentSession>> {
         let rows = sqlx::query_as::<_, AgentSessionRow>(

@@ -140,11 +140,12 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     };
 
     const handleRemove = async (sessionId: string) => {
-        const session = sessions.find(s => s.id === sessionId);
-        if (session?.status === 'running') {
-            try { await invokeCommand('stop_agent_session', { sessionId }); } catch { /* continue */ }
+        try {
+            await invokeCommand('remove_agent_session', { sessionId });
+            setSessions(prev => prev.filter(s => s.id !== sessionId));
+        } catch {
+            toast.error('Failed to remove session');
         }
-        setSessions(prev => prev.filter(s => s.id !== sessionId));
     };
 
     const handleFocus = async () => {
@@ -169,6 +170,10 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const totalDeletions = diff?.file_stats.reduce((sum, f) => sum + f.deletions, 0) ?? 0;
     const projectPorts = ports.filter(p => p.is_project);
     const otherPorts = ports.filter(p => !p.is_project);
+
+    const COMMON_DEV_PORTS = [3000, 3001, 3002, 4000, 5000, 5173, 5174, 8000, 8080, 8888];
+    const occupiedSet = new Set(ports.map(p => p.port));
+    const suggestedPorts = COMMON_DEV_PORTS.filter(p => !occupiedSet.has(p)).slice(0, 6);
 
     return (
         <div className="h-full flex">
@@ -381,7 +386,19 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     </div>
                                 </div>
                             )}
-                            {ports.length === 0 && (
+                            {suggestedPorts.length > 0 && (
+                                <div className="px-3 py-1.5">
+                                    <span className="text-[9px] font-semibold text-muted-foreground/40 uppercase tracking-wider">Available</span>
+                                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                        {suggestedPorts.map(p => (
+                                            <span key={p} className="inline-flex items-center px-2 py-1 rounded border border-dashed border-border text-muted-foreground/40 text-[11px] font-mono">
+                                                {p}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {ports.length === 0 && suggestedPorts.length === 0 && (
                                 <div className="px-3 py-4 text-center">
                                     <p className="text-[10px] text-muted-foreground/30">No listening ports</p>
                                 </div>

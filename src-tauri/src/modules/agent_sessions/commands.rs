@@ -136,6 +136,40 @@ pub async fn stop_agent_session(
     Ok(())
 }
 
+/// Remove an agent session from both in-memory state and the database.
+///
+/// If the session is still running, it is stopped first.
+#[command]
+pub async fn remove_agent_session(
+    state: State<'_, AgentSessionState>,
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<(), String> {
+    // Stop if running
+    {
+        let sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        if let Some(s) = sessions.get(&session_id) {
+            if s.status == "running" {
+                drop(sessions);
+                let _ = AgentSessionService::stop_session(state.inner(), &session_id);
+            }
+        }
+    }
+
+    // Remove from memory
+    {
+        let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        sessions.remove(&session_id);
+    }
+
+    // Remove from DB
+    let repo = AgentSessionRepository::new(pool.inner().clone());
+    repo.delete(&session_id).await
+        .map_err(|e| format!("Failed to delete session: {}", e))?;
+
+    Ok(())
+}
+
 /// Build and return the project context document without launching a session.
 ///
 /// Useful for previewing what context will be injected into agent sessions.

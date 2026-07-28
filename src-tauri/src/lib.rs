@@ -116,10 +116,12 @@ pub fn run() {
         modules::playbooks::commands::get_project_playbook_runs,
         modules::playbooks::commands::export_playbook_yaml,
         modules::playbooks::commands::import_playbook_yaml,
+        modules::playbooks::commands::scan_project_commands,
         // Agent Sessions
         modules::agent_sessions::commands::launch_agent_sessions,
         modules::agent_sessions::commands::list_agent_sessions,
         modules::agent_sessions::commands::stop_agent_session,
+        modules::agent_sessions::commands::remove_agent_session,
         modules::agent_sessions::commands::get_project_context_preview,
         modules::agent_sessions::commands::focus_agent_terminals,
         modules::agent_sessions::commands::get_session_diff,
