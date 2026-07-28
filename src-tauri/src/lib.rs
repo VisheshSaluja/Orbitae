@@ -123,6 +123,7 @@ pub fn run() {
         modules::agent_sessions::commands::get_project_context_preview,
         modules::agent_sessions::commands::focus_agent_terminals,
         modules::agent_sessions::commands::get_session_diff,
+        modules::agent_sessions::commands::scan_listening_ports,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

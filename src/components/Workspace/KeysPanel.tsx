@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { Card, CardContent } from '../ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from '../ui/dialog';
 import { Eye, Lock, Key, Trash2, Plus } from 'lucide-react';
 import { invokeCommand } from '../../lib/tauri';
@@ -90,21 +89,18 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
         <div className="h-full flex flex-col p-4 space-y-4 overflow-hidden">
             <div className="flex items-center justify-between shrink-0">
                 <div>
-                    <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <Lock className="w-5 h-5 text-primary" />
-                        Keys & Secrets
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                        Securely manage environment variables and access tokens.
+                    <h3 className="text-sm font-semibold text-foreground">Keys & Secrets</h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Stored in your system Keychain, protected by TouchID.
                     </p>
                 </div>
-                
+
                 <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                     <DialogTrigger asChild>
-                        <Button size="sm" className="gap-1">
-                            <Plus className="w-4 h-4" />
+                        <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors">
+                            <Plus className="w-3.5 h-3.5" />
                             Add Key
-                        </Button>
+                        </button>
                     </DialogTrigger>
                     <DialogContent>
                         <DialogHeader>
@@ -175,48 +171,45 @@ export const KeysPanel: React.FC<KeysPanelProps> = ({ projectId }) => {
                 {isLoading && <div className="text-sm text-muted-foreground">Loading...</div>}
                 
                 {!isLoading && keys.length === 0 && (
-                    <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                        <Lock className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        <p>No keys stored yet.</p>
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-12 h-12 rounded-xl bg-foreground/[0.04] flex items-center justify-center mb-3">
+                            <Lock className="w-5 h-5 text-muted-foreground/40" />
+                        </div>
+                        <p className="text-[12px] text-muted-foreground">No keys stored yet</p>
                     </div>
                 )}
 
                 {keys.map(key => (
-                    <Card key={key.id} className="group hover:border-primary/50 transition-colors">
-                        <CardContent className="p-4 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-md bg-muted text-muted-foreground">
-                                    <Key className="w-4 h-4" />
-                                </div>
-                                <div className="flex flex-col">
-                                    <span className="font-medium text-sm">{key.name}</span>
-                                    <span className="text-xs text-muted-foreground font-mono">
-                                        ID: {key.id.slice(0, 8)}...
-                                    </span>
-                                </div>
+                    <div key={key.id} className="group flex items-center justify-between p-3 rounded-lg border border-border hover:bg-foreground/[0.02] transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                            <div className="p-2 rounded-md bg-foreground/[0.04]">
+                                <Key className="w-3.5 h-3.5 text-muted-foreground" />
                             </div>
-                            
-                            <div className="flex items-center gap-2">
-                                <Button 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="text-muted-foreground hover:text-foreground"
-                                    onClick={() => handleRevealSecret(key.name, key.key_reference)}
-                                    title="Reveal Secret"
-                                >
-                                    <Eye className="w-4 h-4" />
-                                </Button>
-                                <Button 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="text-red-500/70 hover:text-red-500 hover:bg-red-500/10"
-                                    onClick={() => handleDeleteKey(key.id, key.key_reference)}
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </Button>
+                            <div className="min-w-0">
+                                <span className="text-[13px] font-medium text-foreground block truncate">{key.name}</span>
+                                <span className="text-[10px] text-muted-foreground/50 font-mono">
+                                    {key.id.slice(0, 8)}
+                                </span>
                             </div>
-                        </CardContent>
-                    </Card>
+                        </div>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/6 transition-colors"
+                                onClick={() => handleRevealSecret(key.name, key.key_reference)}
+                                title="Reveal"
+                            >
+                                <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                                className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                onClick={() => handleDeleteKey(key.id, key.key_reference)}
+                                title="Delete"
+                            >
+                                <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    </div>
                 ))}
             </div>
         </div>

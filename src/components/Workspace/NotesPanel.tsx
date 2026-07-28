@@ -180,17 +180,11 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
         <div className="h-full flex flex-col p-4 space-y-4 overflow-hidden">
             <div className="flex items-center justify-between shrink-0">
                 <div>
-                    <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <Notebook className="w-5 h-5 text-primary" />
-                        Project Notes
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                        Keep track of ideas, bugs, and designs.
-                    </p>
+                    <h3 className="text-sm font-semibold text-foreground">Project Notes</h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Ideas, bugs, designs, and whiteboard canvases.</p>
                 </div>
                 <div className="flex gap-2 items-center">
-                    {/* Filter UI */}
-                    <div className="flex gap-1 mr-2 px-2 py-1 bg-muted/20 rounded-lg">
+                    <div className="flex gap-1 mr-1 px-2 py-1 rounded-md bg-foreground/[0.03]">
                         {COLORS.map(c => {
                             const isActive = activeFilter === c.id;
                             const label = labels[c.id];
@@ -198,7 +192,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
                                 <button
                                     key={c.id}
                                     onClick={() => setActiveFilter(isActive ? null : c.id)}
-                                    className={`w-4 h-4 rounded-full transition-all ${c.indicator} ${isActive ? 'ring-2 ring-foreground ring-offset-2 scale-110' : 'opacity-40 hover:opacity-80 hover:scale-105'}`}
+                                    className={`w-3.5 h-3.5 rounded-full transition-all ${c.indicator} ${isActive ? 'ring-2 ring-foreground ring-offset-1 scale-110' : 'opacity-30 hover:opacity-70 hover:scale-105'}`}
                                     title={`Filter by ${label}`}
                                 />
                             )
@@ -213,15 +207,17 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
                             </button>
                         )}
                     </div>
-                
-                    <Button variant="outline" size="sm" onClick={openSettings}>
-                        <Settings2 className="w-4 h-4 mr-1" />
-                        Labels
-                    </Button>
-                    <Button size="sm" onClick={handleCreate} className="gap-1">
-                        <Plus className="w-4 h-4" />
+
+                    <button onClick={openSettings} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/6 transition-colors" title="Labels">
+                        <Settings2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                        onClick={handleCreate}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                    >
+                        <Plus className="w-3.5 h-3.5" />
                         New Note
-                    </Button>
+                    </button>
                 </div>
             </div>
 

@@ -8,8 +8,9 @@ import { toast } from 'sonner';
 import { ErrorBoundary } from '../ui/error-boundary';
 import type { ProjectPlaybook, PlaybookRunWithSteps } from '../../types';
 import {
-    Lock, Notebook, BookOpen, ChevronDown, ChevronRight, Plus,
+    Lock, Notebook, BookOpen, Plus,
     Play, Trash2, Clock,
+    type LucideIcon,
 } from 'lucide-react';
 
 interface ContextPanelProps {
@@ -19,26 +20,30 @@ interface ContextPanelProps {
 
 type Section = 'vault' | 'runbooks' | 'notes';
 
+interface SubTab {
+    id: Section;
+    label: string;
+    icon: LucideIcon;
+}
+
+const SUB_TABS: SubTab[] = [
+    { id: 'vault', label: 'Vault', icon: Lock },
+    { id: 'runbooks', label: 'Runbooks', icon: BookOpen },
+    { id: 'notes', label: 'Notes', icon: Notebook },
+];
+
 interface PlaybookListItem {
     playbook: ProjectPlaybook;
     lastRun: PlaybookRunWithSteps | null;
 }
 
 export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPath }) => {
-    const [expanded, setExpanded] = useState<Record<Section, boolean>>({
-        vault: true,
-        runbooks: true,
-        notes: true,
-    });
+    const [activeSection, setActiveSection] = useState<Section>('vault');
 
     const [playbooks, setPlaybooks] = React.useState<PlaybookListItem[]>([]);
     const [activePlaybook, setActivePlaybook] = React.useState<ProjectPlaybook | null>(null);
     const [, setActiveRun] = React.useState<PlaybookRunWithSteps | null>(null);
     const [view, setView] = React.useState<'list' | 'editor' | 'run'>('list');
-
-    const toggle = (section: Section) => {
-        setExpanded(prev => ({ ...prev, [section]: !prev[section] }));
-    };
 
     React.useEffect(() => {
         loadPlaybooks();
@@ -131,114 +136,109 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
     }
 
     return (
-        <div className="h-full overflow-y-auto">
-            {/* Vault Section */}
-            <SectionHeader
-                icon={Lock}
-                label="Vault"
-                count={null}
-                expanded={expanded.vault}
-                onToggle={() => toggle('vault')}
-            />
-            {expanded.vault && (
-                <ErrorBoundary>
-                    <KeysPanel projectId={projectId} />
-                </ErrorBoundary>
-            )}
+        <div className="h-full flex flex-col">
+            {/* Sub-tab bar */}
+            <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-border">
+                {SUB_TABS.map(tab => {
+                    const Icon = tab.icon;
+                    const isActive = activeSection === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveSection(tab.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all duration-100 ${
+                                isActive
+                                    ? 'bg-foreground/8 text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-foreground/4'
+                            }`}
+                        >
+                            <Icon className="w-3.5 h-3.5" />
+                            {tab.label}
+                            {tab.id === 'runbooks' && playbooks.length > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/6 text-muted-foreground tabular-nums">{playbooks.length}</span>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
 
-            {/* Runbooks Section */}
-            <SectionHeader
-                icon={BookOpen}
-                label="Runbooks"
-                count={playbooks.length}
-                expanded={expanded.runbooks}
-                onToggle={() => toggle('runbooks')}
-                action={<button onClick={handleCreatePlaybook} className="p-1 rounded hover:bg-foreground/6 text-muted-foreground hover:text-foreground transition-colors"><Plus className="w-3.5 h-3.5" /></button>}
-            />
-            {expanded.runbooks && (
-                <div className="px-4 pb-4">
-                    {playbooks.length === 0 ? (
-                        <div className="py-8 text-center text-muted-foreground border border-dashed border-border rounded-lg">
-                            <BookOpen className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                            <p className="text-[12px]">No runbooks yet</p>
-                            <button onClick={handleCreatePlaybook} className="text-[12px] text-blue-400 hover:text-blue-300 mt-1">Create one</button>
+            {/* Content */}
+            <div className="flex-1 overflow-hidden">
+                {activeSection === 'vault' && (
+                    <ErrorBoundary>
+                        <KeysPanel projectId={projectId} />
+                    </ErrorBoundary>
+                )}
+
+                {activeSection === 'runbooks' && (
+                    <div className="h-full overflow-y-auto p-4">
+                        <div className="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 className="text-sm font-semibold text-foreground">Runbooks</h3>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">Automate repeatable workflows for your project.</p>
+                            </div>
+                            <button
+                                onClick={handleCreatePlaybook}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                New Runbook
+                            </button>
                         </div>
-                    ) : (
-                        <div className="space-y-2">
-                            {playbooks.map(({ playbook, lastRun }) => (
-                                <div
-                                    key={playbook.id}
-                                    className="group flex items-center justify-between p-3 rounded-lg bg-card border border-border hover:border-border transition-all duration-150 cursor-pointer"
-                                    onClick={() => { setActivePlaybook(playbook); setView('editor'); }}
-                                >
-                                    <div className="min-w-0">
-                                        <div className="text-[13px] font-medium text-foreground truncate">{playbook.name}</div>
-                                        {lastRun && (
-                                            <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
-                                                <Clock className="w-3 h-3" />
-                                                <span>{lastRun.run.status}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); handleRunPlaybook(playbook); }}
-                                            className="p-1.5 rounded-md text-green-400 hover:bg-green-500/10 transition-colors"
-                                            title="Run"
-                                        >
-                                            <Play className="w-3.5 h-3.5" />
-                                        </button>
-                                        <button
-                                            onClick={(e) => handleDeletePlaybook(playbook.id, e)}
-                                            className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                            title="Delete"
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                    </div>
+                        {playbooks.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                                <div className="w-12 h-12 rounded-xl bg-foreground/[0.04] flex items-center justify-center mb-3">
+                                    <BookOpen className="w-5 h-5 text-muted-foreground/40" />
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
+                                <p className="text-[12px] text-muted-foreground">No runbooks yet</p>
+                                <button onClick={handleCreatePlaybook} className="text-[12px] text-muted-foreground hover:text-foreground mt-2 underline underline-offset-2">Create one</button>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                {playbooks.map(({ playbook, lastRun }) => (
+                                    <div
+                                        key={playbook.id}
+                                        className="group flex items-center justify-between p-3 rounded-lg border border-border hover:bg-foreground/[0.02] transition-all duration-150 cursor-pointer"
+                                        onClick={() => { setActivePlaybook(playbook); setView('editor'); }}
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="text-[13px] font-medium text-foreground truncate">{playbook.name}</div>
+                                            {lastRun && (
+                                                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
+                                                    <Clock className="w-3 h-3" />
+                                                    <span>{lastRun.run.status}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleRunPlaybook(playbook); }}
+                                                className="p-1.5 rounded-md text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                                                title="Run"
+                                            >
+                                                <Play className="w-3.5 h-3.5" />
+                                            </button>
+                                            <button
+                                                onClick={(e) => handleDeletePlaybook(playbook.id, e)}
+                                                className="p-1.5 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                                title="Delete"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
 
-            {/* Notes Section */}
-            <SectionHeader
-                icon={Notebook}
-                label="Notes"
-                count={null}
-                expanded={expanded.notes}
-                onToggle={() => toggle('notes')}
-            />
-            {expanded.notes && (
-                <ErrorBoundary>
-                    <NotesPanel projectId={projectId} />
-                </ErrorBoundary>
-            )}
+                {activeSection === 'notes' && (
+                    <ErrorBoundary>
+                        <NotesPanel projectId={projectId} />
+                    </ErrorBoundary>
+                )}
+            </div>
         </div>
     );
 };
-
-interface SectionHeaderProps {
-    icon: React.FC<{ className?: string }>;
-    label: string;
-    count: number | null;
-    expanded: boolean;
-    onToggle: () => void;
-    action?: React.ReactNode;
-}
-
-const SectionHeader: React.FC<SectionHeaderProps> = ({ icon: Icon, label, count, expanded, onToggle, action }) => (
-    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-background/95 backdrop-blur-sm border-b border-border/50">
-        <button onClick={onToggle} className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors">
-            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            <Icon className="w-3.5 h-3.5" />
-            {label}
-            {count !== null && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-foreground/6 text-muted-foreground font-medium normal-case">{count}</span>
-            )}
-        </button>
-        {action}
-    </div>
-);

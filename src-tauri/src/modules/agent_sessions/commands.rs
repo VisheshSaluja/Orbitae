@@ -246,6 +246,90 @@ pub struct FileDiffStat {
     pub deletions: u32,
 }
 
+/// Scan for TCP ports currently listening on this machine.
+///
+/// Uses `lsof` on macOS to find listening sockets, then optionally filters
+/// to processes whose working directory is under the project path.
+#[command]
+pub async fn scan_listening_ports(
+    project_path: String,
+) -> Result<Vec<ListeningPort>, String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
+        .output()
+        .map_err(|e| format!("Failed to run lsof: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expanded_path = crate::shared::utils::expand_path(&project_path);
+
+    let mut ports: Vec<ListeningPort> = Vec::new();
+    let mut seen_ports = std::collections::HashSet::new();
+
+    for line in stdout.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 9 { continue; }
+
+        let process_name = cols[0].to_string();
+        let pid_str = cols[1];
+        let name_col = cols[cols.len() - 1];
+
+        let port: u16 = match name_col.rsplit(':').next().and_then(|p| p.parse().ok()) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if !seen_ports.insert(port) { continue; }
+
+        let pid: u32 = match pid_str.parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let cwd = get_process_cwd(pid);
+        let is_project = cwd.as_ref().map_or(false, |c| c.starts_with(&expanded_path));
+
+        ports.push(ListeningPort {
+            port,
+            pid,
+            process: process_name,
+            is_project,
+        });
+    }
+
+    ports.sort_by_key(|p| (!p.is_project, p.port));
+    Ok(ports)
+}
+
+#[derive(serde::Serialize)]
+pub struct ListeningPort {
+    pub port: u16,
+    pub pid: u32,
+    pub process: String,
+    pub is_project: bool,
+}
+
+/// Get the working directory of a process by PID (macOS).
+fn get_process_cwd(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() { return None; }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix('n') {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
 /// Resolve the API key for a given agent type.
 async fn resolve_api_key(
     pool: &SqlitePool,
