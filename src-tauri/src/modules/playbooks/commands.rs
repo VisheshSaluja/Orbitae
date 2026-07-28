@@ -178,6 +178,48 @@ pub struct DiscoveredCommand {
     pub raw_command: String,
 }
 
+/// Import a runbook from a `.orbitae-runbook.yml` file in the project root.
+#[command]
+pub async fn import_runbook_file(
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+    project_path: String,
+) -> Result<String, String> {
+    let expanded = crate::shared::utils::expand_path(&project_path);
+    let file_path = std::path::Path::new(&expanded).join(".orbitae-runbook.yml");
+
+    if !file_path.exists() {
+        return Err("No .orbitae-runbook.yml found in the project root. Generate one first with an AI agent.".to_string());
+    }
+
+    let yaml_content = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read runbook file: {}", e))?;
+
+    let yaml_doc: PlaybookYaml = serde_yaml::from_str(&yaml_content)
+        .map_err(|e| format!("Invalid YAML in .orbitae-runbook.yml: {}", e))?;
+
+    let repo = ProjectRepository::new(pool.inner().clone());
+
+    let playbook = repo.create_playbook(
+        project_id,
+        yaml_doc.name,
+        yaml_doc.description,
+    ).await.map_err(|e| e.to_string())?;
+
+    for step in yaml_doc.steps {
+        repo.create_playbook_step(
+            playbook.id.clone(),
+            step.name,
+            step.r#type,
+            step.command,
+            step.depends_on,
+            step.expected_output,
+        ).await.map_err(|e| e.to_string())?;
+    }
+
+    Ok(playbook.id)
+}
+
 /// Imports a playbook from a YAML string into a project.
 #[command]
 pub async fn import_playbook_yaml(

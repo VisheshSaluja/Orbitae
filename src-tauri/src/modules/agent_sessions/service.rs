@@ -146,16 +146,21 @@ fn build_cli_command(
         }
     }
 
-    let escaped_path = project_path.replace('\'', "'\\''");
+    let resolved = crate::shared::utils::expand_path(project_path);
+    let escaped_path = resolved.replace('\'', "'\\''");
     parts.push(format!("cd '{}'", escaped_path));
 
     if let Some(ctx_path) = context_file {
         parts.push(format!("echo '\\n📋 Project context written to: {}'", ctx_path));
     }
 
-    let agent_cmd = match agent_type {
-        "claude" => "claude".to_string(),
-        "codex" => "codex".to_string(),
+    let agent_cmd = match (agent_type, context_file) {
+        ("claude", Some(ctx)) => {
+            let escaped_ctx = ctx.replace('\'', "'\\''");
+            format!("claude 'Your task instructions are in {} — read that file and follow them exactly.'", escaped_ctx)
+        }
+        ("claude", None) => "claude".to_string(),
+        ("codex", _) => "codex".to_string(),
         _ => "exec $SHELL".to_string(),
     };
     parts.push(agent_cmd);

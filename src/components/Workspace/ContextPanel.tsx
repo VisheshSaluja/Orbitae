@@ -10,6 +10,7 @@ import type { ProjectPlaybook, PlaybookRunWithSteps } from '../../types';
 import {
     Lock, Notebook, BookOpen, Plus,
     Play, Trash2, Clock, Wand2, FileCode, Check,
+    Bot, Upload,
     type LucideIcon,
 } from 'lucide-react';
 
@@ -56,6 +57,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
     const [selectedCmds, setSelectedCmds] = React.useState<Set<string>>(new Set());
     const [isScanning, setIsScanning] = React.useState(false);
     const [showDiscovered, setShowDiscovered] = React.useState(false);
+    const [isGeneratingAI, setIsGeneratingAI] = React.useState(false);
+    const [isImporting, setIsImporting] = React.useState(false);
 
     React.useEffect(() => {
         loadPlaybooks();
@@ -158,6 +161,69 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
         });
     };
 
+    const handleGenerateWithAI = async () => {
+        setIsGeneratingAI(true);
+        try {
+            const instructions = [
+                `You are generating a runbook for the project at: ${projectPath}`,
+                'Analyze this project thoroughly: read the README, package.json, Makefile, docker-compose files, Cargo.toml, source structure, and any CI/CD configs.',
+                '',
+                'Then create a file called `.orbitae-runbook.yml` at the project root with this exact YAML structure:',
+                '',
+                '```yaml',
+                'name: "Project Setup & Dev"',
+                'description: "Auto-generated runbook for this project"',
+                'steps:',
+                '  - name: "Install dependencies"',
+                '    type: command',
+                '    command: "npm install"',
+                '  - name: "Run dev server"',
+                '    type: command',
+                '    command: "npm run dev"',
+                '    depends_on: "Install dependencies"',
+                '```',
+                '',
+                'Rules:',
+                '- Each step must have `name` (string), `type` ("command"), and `command` (shell command).',
+                '- Optional fields: `depends_on` (name of a prior step), `expected_output` (regex to validate output).',
+                '- Include steps for: dependency install, build, dev server, test, lint, database setup, docker services — whatever applies.',
+                '- Order steps by dependency. If step B needs step A, set `depends_on: "Step A name"`.',
+                '- Use the actual commands from the project (npm, yarn, pnpm, make, cargo, docker compose, etc.).',
+                '- Write the file, then tell the user it is ready to import in Orbitae.',
+            ].join('\n');
+
+            await invokeCommand('launch_agent_sessions', {
+                agentType: 'claude',
+                count: 1,
+                projectId,
+                projectPath,
+                instructions,
+                injectContext: false,
+            });
+            toast.success('AI agent launched — it will create .orbitae-runbook.yml in your project');
+        } catch (err) {
+            toast.error(`Failed to launch AI agent: ${err}`);
+        } finally {
+            setIsGeneratingAI(false);
+        }
+    };
+
+    const handleImportRunbookFile = async () => {
+        setIsImporting(true);
+        try {
+            const playbookId = await invokeCommand<string>('import_runbook_file', { projectId, projectPath });
+            await loadPlaybooks();
+            toast.success('Runbook imported from .orbitae-runbook.yml');
+            const loaded = await invokeCommand<ProjectPlaybook[]>('get_project_playbooks', { projectId });
+            const created = loaded.find(p => p.id === playbookId);
+            if (created) { setActivePlaybook(created); setView('editor'); }
+        } catch (err) {
+            toast.error(`${err}`);
+        } finally {
+            setIsImporting(false);
+        }
+    };
+
     const handleRunPlaybook = async (pb: ProjectPlaybook) => {
         try {
             const result = await invokeCommand<PlaybookRunWithSteps>('run_playbook', {
@@ -246,19 +312,28 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
-                                    onClick={handleScanProject}
-                                    disabled={isScanning}
+                                    onClick={handleImportRunbookFile}
+                                    disabled={isImporting}
                                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-foreground/4 transition-colors disabled:opacity-50"
+                                    title="Import .orbitae-runbook.yml from project root"
                                 >
-                                    <Wand2 className="w-3.5 h-3.5" />
-                                    {isScanning ? 'Scanning...' : 'Generate from Project'}
+                                    <Upload className="w-3.5 h-3.5" />
+                                    {isImporting ? 'Importing...' : 'Import'}
+                                </button>
+                                <button
+                                    onClick={handleGenerateWithAI}
+                                    disabled={isGeneratingAI}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-colors disabled:opacity-50"
+                                >
+                                    <Bot className="w-3.5 h-3.5" />
+                                    {isGeneratingAI ? 'Launching...' : 'Generate with AI'}
                                 </button>
                                 <button
                                     onClick={handleCreatePlaybook}
                                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors"
                                 >
                                     <Plus className="w-3.5 h-3.5" />
-                                    New Runbook
+                                    New
                                 </button>
                             </div>
                         </div>
@@ -322,14 +397,20 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
 
                         {playbooks.length === 0 && !showDiscovered ? (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-12 h-12 rounded-xl bg-foreground/[0.04] flex items-center justify-center mb-3">
-                                    <BookOpen className="w-5 h-5 text-muted-foreground/40" />
+                                <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center mb-3">
+                                    <Bot className="w-5 h-5 text-orange-400/60" />
                                 </div>
                                 <p className="text-[12px] text-muted-foreground mb-2">No runbooks yet</p>
-                                <p className="text-[11px] text-muted-foreground/50 max-w-xs mb-4">Click "Generate from Project" to auto-discover commands from your package.json, Makefile, and docker-compose, or create one manually.</p>
-                                <button onClick={handleScanProject} disabled={isScanning} className="text-[12px] text-muted-foreground hover:text-foreground underline underline-offset-2">
-                                    {isScanning ? 'Scanning...' : 'Auto-generate'}
-                                </button>
+                                <p className="text-[11px] text-muted-foreground/50 max-w-xs mb-4">Use "Generate with AI" to launch an agent that analyzes your project and creates a runbook, or create one manually.</p>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={handleGenerateWithAI} disabled={isGeneratingAI} className="text-[12px] text-orange-400 hover:text-orange-300 underline underline-offset-2">
+                                        {isGeneratingAI ? 'Launching...' : 'Generate with AI'}
+                                    </button>
+                                    <span className="text-[10px] text-muted-foreground/30">or</span>
+                                    <button onClick={handleScanProject} disabled={isScanning} className="text-[12px] text-muted-foreground hover:text-foreground underline underline-offset-2">
+                                        {isScanning ? 'Scanning...' : 'Scan project files'}
+                                    </button>
+                                </div>
                             </div>
                         ) : (
                             <div className="space-y-2">

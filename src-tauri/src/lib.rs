@@ -117,6 +117,7 @@ pub fn run() {
         modules::playbooks::commands::export_playbook_yaml,
         modules::playbooks::commands::import_playbook_yaml,
         modules::playbooks::commands::scan_project_commands,
+        modules::playbooks::commands::import_runbook_file,
         // Agent Sessions
         modules::agent_sessions::commands::launch_agent_sessions,
         modules::agent_sessions::commands::list_agent_sessions,
