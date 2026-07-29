@@ -1,0 +1,45 @@
+name: "Project Setup & Dev"
+description: "Auto-generated runbook for this project"
+steps:
+  - name: "Install dependencies"
+    type: command
+    command: "npm install"
+
+  - name: "Lint frontend"
+    type: command
+    command: "npm run lint"
+    depends_on: "Install dependencies"
+
+  - name: "Build frontend"
+    type: command
+    command: "npm run build"
+    depends_on: "Install dependencies"
+
+  - name: "Lint Rust"
+    type: command
+    command: "cd src-tauri && cargo clippy -- -D warnings"
+    depends_on: "Install dependencies"
+
+  - name: "Test Rust"
+    type: command
+    command: "cd src-tauri && cargo test"
+    depends_on: "Install dependencies"
+
+  - name: "Run dev app"
+    type: command
+    command: "npm run tauri dev"
+    depends_on: "Install dependencies"
+
+  - name: "Build desktop app"
+    type: command
+    command: "npm run tauri build"
+    depends_on: "Build frontend"
+
+  - name: "Install website dependencies"
+    type: command
+    command: "cd website && npm install"
+
+  - name: "Run website dev server"
+    type: command
+    command: "cd website && npm run dev"
+    depends_on: "Install website dependencies"

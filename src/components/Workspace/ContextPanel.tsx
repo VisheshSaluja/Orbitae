@@ -10,7 +10,7 @@ import type { ProjectPlaybook, PlaybookRunWithSteps } from '../../types';
 import {
     Lock, Notebook, BookOpen, Plus,
     Play, Trash2, Clock, Wand2, FileCode, Check,
-    Bot, Upload,
+    Bot, Upload, X,
     type LucideIcon,
 } from 'lucide-react';
 
@@ -59,10 +59,29 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
     const [showDiscovered, setShowDiscovered] = React.useState(false);
     const [isGeneratingAI, setIsGeneratingAI] = React.useState(false);
     const [isImporting, setIsImporting] = React.useState(false);
+    const [waitingForAIRunbook, setWaitingForAIRunbook] = React.useState(false);
 
     React.useEffect(() => {
         loadPlaybooks();
     }, [projectId]);
+
+    React.useEffect(() => {
+        if (!waitingForAIRunbook) return;
+        const interval = setInterval(async () => {
+            try {
+                const playbookId = await invokeCommand<string>('import_runbook_file', { projectId, projectPath });
+                setWaitingForAIRunbook(false);
+                await loadPlaybooks();
+                toast.success('Runbook auto-imported from .orbitae-runbook.yml');
+                const loaded = await invokeCommand<ProjectPlaybook[]>('get_project_playbooks', { projectId });
+                const created = loaded.find(p => p.id === playbookId);
+                if (created) { setActivePlaybook(created); setView('editor'); }
+            } catch {
+                // file not ready yet
+            }
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [waitingForAIRunbook, projectId, projectPath]);
 
     const loadPlaybooks = async () => {
         try {
@@ -168,7 +187,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                 `You are generating a runbook for the project at: ${projectPath}`,
                 'Analyze this project thoroughly: read the README, package.json, Makefile, docker-compose files, Cargo.toml, source structure, and any CI/CD configs.',
                 '',
-                'Then create a file called `.orbitae-runbook.yml` at the project root with this exact YAML structure:',
+                `Write the runbook to the ABSOLUTE path: ${projectPath}/.orbitae-runbook.yml`,
+                'Use this exact YAML structure:',
                 '',
                 '```yaml',
                 'name: "Project Setup & Dev"',
@@ -184,6 +204,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                 '```',
                 '',
                 'Rules:',
+                '- IMPORTANT: Write the file using the absolute path above, not a relative path.',
                 '- Each step must have `name` (string), `type` ("command"), and `command` (shell command).',
                 '- Optional fields: `depends_on` (name of a prior step), `expected_output` (regex to validate output).',
                 '- Include steps for: dependency install, build, dev server, test, lint, database setup, docker services — whatever applies.',
@@ -200,7 +221,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                 instructions,
                 injectContext: false,
             });
-            toast.success('AI agent launched — it will create .orbitae-runbook.yml in your project');
+            setWaitingForAIRunbook(true);
+            toast.success('AI agent launched — runbook will auto-import when ready');
         } catch (err) {
             toast.error(`Failed to launch AI agent: ${err}`);
         } finally {
@@ -337,6 +359,19 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
                                 </button>
                             </div>
                         </div>
+
+                        {waitingForAIRunbook && (
+                            <div className="mb-4 rounded-lg border border-orange-500/20 bg-orange-500/5 p-3 flex items-center gap-3">
+                                <div className="w-5 h-5 rounded-full border-2 border-orange-400/40 border-t-orange-400 animate-spin shrink-0" />
+                                <div>
+                                    <p className="text-[12px] font-medium text-foreground">AI agent is generating your runbook...</p>
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">It will auto-import once .orbitae-runbook.yml is written to the project.</p>
+                                </div>
+                                <button onClick={() => setWaitingForAIRunbook(false)} className="ml-auto p-1 rounded hover:bg-foreground/6 text-muted-foreground shrink-0">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                        )}
 
                         {/* Discovered commands panel */}
                         {showDiscovered && discoveredCmds.length > 0 && (
