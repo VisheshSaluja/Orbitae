@@ -33,6 +33,10 @@ pub fn run() {
       let agent_session_state: modules::agent_sessions::models::AgentSessionState = Arc::new(Mutex::new(HashMap::new()));
       app_handle.manage(agent_session_state);
 
+      // Initialize Embedded PTY Session State
+      let embedded_state: modules::agent_sessions::embedded::EmbeddedSessionMap = Arc::new(Mutex::new(HashMap::new()));
+      app_handle.manage(embedded_state);
+
       tauri::async_runtime::block_on(async {
           let pool = database::init_pool(&app_data_dir).await.expect("failed to init database");
 
@@ -127,6 +131,10 @@ pub fn run() {
         modules::agent_sessions::commands::focus_agent_terminals,
         modules::agent_sessions::commands::get_session_diff,
         modules::agent_sessions::commands::scan_listening_ports,
+        // Embedded Agent Sessions
+        modules::agent_sessions::commands::launch_embedded_session,
+        modules::agent_sessions::commands::write_to_embedded_session,
+        modules::agent_sessions::commands::resize_embedded_session,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

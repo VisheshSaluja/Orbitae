@@ -1,5 +1,6 @@
-use tauri::{command, State};
+use tauri::{command, AppHandle, State};
 use sqlx::SqlitePool;
+use super::embedded::EmbeddedSessionMap;
 use super::models::{AgentSession, AgentSessionState, LaunchRequest};
 use super::repository::AgentSessionRepository;
 use super::service::AgentSessionService;
@@ -362,6 +363,109 @@ fn get_process_cwd(pid: u32) -> Option<String> {
         }
     }
     None
+}
+
+/// Launch an embedded agent session inside Orbitae's own PTY.
+///
+/// Unlike `launch_agent_sessions` which opens Terminal.app, this spawns the
+/// agent as a child process. Output is streamed to the frontend via Tauri
+/// events (`agent-output-{id}`), and input is accepted via `write_to_embedded_session`.
+#[command]
+pub async fn launch_embedded_session(
+    state: State<'_, AgentSessionState>,
+    embedded: State<'_, EmbeddedSessionMap>,
+    pool: State<'_, SqlitePool>,
+    app_handle: AppHandle,
+    agent_type: String,
+    project_id: String,
+    project_path: String,
+    model: Option<String>,
+    instructions: Option<String>,
+    inject_context: Option<bool>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+) -> Result<AgentSession, String> {
+    let final_instructions = if inject_context.unwrap_or(false) {
+        let context = super::context::build_project_context(
+            pool.inner(), &project_id, &project_path
+        ).await.map_err(|e| format!("Failed to build context: {}", e))?;
+
+        match instructions {
+            Some(instr) => Some(format!("{}\n\n---\n\n{}", context, instr)),
+            None => Some(context),
+        }
+    } else {
+        instructions
+    };
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let display_name = format!(
+        "{} (embedded)",
+        match agent_type.as_str() {
+            "claude" => "Claude",
+            "codex" => "Codex",
+            _ => "Terminal",
+        }
+    );
+
+    let pid = super::embedded::spawn_embedded(
+        &id,
+        &agent_type,
+        &project_path,
+        model.as_deref(),
+        final_instructions.as_deref(),
+        rows.unwrap_or(24),
+        cols.unwrap_or(80),
+        embedded.inner(),
+        &app_handle,
+    )?;
+
+    let session = AgentSession {
+        id: id.clone(),
+        agent_type,
+        display_name,
+        status: "running".to_string(),
+        pid: Some(pid),
+        project_id,
+        instructions: final_instructions,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    // Persist to memory + SQLite
+    {
+        let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        sessions.insert(id.clone(), session.clone());
+    }
+    let repo = AgentSessionRepository::new(pool.inner().clone());
+    let s = session.clone();
+    tokio::spawn(async move {
+        if let Err(e) = repo.insert(&s).await {
+            tracing::warn!("Failed to persist embedded session: {}", e);
+        }
+    });
+
+    Ok(session)
+}
+
+/// Send keystrokes to an embedded agent session's PTY.
+#[command]
+pub async fn write_to_embedded_session(
+    embedded: State<'_, EmbeddedSessionMap>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
+    super::embedded::write_input(embedded.inner(), &session_id, data.as_bytes())
+}
+
+/// Resize an embedded agent session's PTY.
+#[command]
+pub async fn resize_embedded_session(
+    embedded: State<'_, EmbeddedSessionMap>,
+    session_id: String,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    super::embedded::resize(embedded.inner(), &session_id, rows, cols)
 }
 
 /// Resolve the API key for a given agent type.
