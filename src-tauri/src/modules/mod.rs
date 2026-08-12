@@ -6,3 +6,4 @@ pub mod mcp;
 pub mod playbooks;
 pub mod agent_sessions;
 pub mod router;
+pub mod orchestrator;
