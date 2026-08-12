@@ -179,6 +179,8 @@ pub struct DiscoveredCommand {
 }
 
 /// Import a runbook from a `.orbitae-runbook.yml` file in the project root.
+///
+/// Checks multiple possible filenames that an AI agent might use.
 #[command]
 pub async fn import_runbook_file(
     pool: State<'_, SqlitePool>,
@@ -186,17 +188,26 @@ pub async fn import_runbook_file(
     project_path: String,
 ) -> Result<String, String> {
     let expanded = crate::shared::utils::expand_path(&project_path);
-    let file_path = std::path::Path::new(&expanded).join(".orbitae-runbook.yml");
+    let root = std::path::Path::new(&expanded);
 
-    if !file_path.exists() {
-        return Err("No .orbitae-runbook.yml found in the project root. Generate one first with an AI agent.".to_string());
-    }
+    let candidates = [
+        ".orbitae-runbook.yml",
+        ".orbitae-runbook.yaml",
+        "orbitae-runbook.yml",
+        "orbitae-runbook.yaml",
+    ];
+
+    let file_path = candidates
+        .iter()
+        .map(|name| root.join(name))
+        .find(|p| p.exists())
+        .ok_or_else(|| "FILE_NOT_FOUND: No runbook file found in project root.".to_string())?;
 
     let yaml_content = std::fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read runbook file: {}", e))?;
 
     let yaml_doc: PlaybookYaml = serde_yaml::from_str(&yaml_content)
-        .map_err(|e| format!("Invalid YAML in .orbitae-runbook.yml: {}", e))?;
+        .map_err(|e| format!("YAML_PARSE_ERROR: {}", e))?;
 
     let repo = ProjectRepository::new(pool.inner().clone());
 

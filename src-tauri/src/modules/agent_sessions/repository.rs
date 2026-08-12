@@ -89,6 +89,7 @@ impl AgentSessionRepository {
 
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
+
 }
 
 #[derive(sqlx::FromRow)]

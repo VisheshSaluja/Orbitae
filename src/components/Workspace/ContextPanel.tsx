@@ -67,17 +67,26 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ projectId, projectPa
 
     React.useEffect(() => {
         if (!waitingForAIRunbook) return;
+        let attempts = 0;
         const interval = setInterval(async () => {
+            attempts++;
             try {
                 const playbookId = await invokeCommand<string>('import_runbook_file', { projectId, projectPath });
                 setWaitingForAIRunbook(false);
                 await loadPlaybooks();
-                toast.success('Runbook auto-imported from .orbitae-runbook.yml');
+                toast.success('Runbook auto-imported!');
                 const loaded = await invokeCommand<ProjectPlaybook[]>('get_project_playbooks', { projectId });
                 const created = loaded.find(p => p.id === playbookId);
                 if (created) { setActivePlaybook(created); setView('editor'); }
-            } catch {
-                // file not ready yet
+            } catch (err) {
+                const msg = String(err);
+                if (msg.includes('YAML_PARSE_ERROR')) {
+                    setWaitingForAIRunbook(false);
+                    toast.error(`Runbook file found but has invalid YAML: ${msg.replace('YAML_PARSE_ERROR: ', '')}`);
+                } else if (attempts >= 24) {
+                    setWaitingForAIRunbook(false);
+                    toast.error('Timed out waiting for runbook file. Try clicking Import manually after the agent finishes.');
+                }
             }
         }, 5000);
         return () => clearInterval(interval);

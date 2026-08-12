@@ -6,8 +6,10 @@ import {
     Play, Square, Bot, Zap, Monitor, ExternalLink,
     Plus, RefreshCw, Clock, FileCode, GitBranch,
     X, Eye, Globe, ChevronDown, ChevronRight, ArrowLeft, LayoutGrid,
+    ListChecks,
 } from 'lucide-react';
 import { TerminalGrid } from './TerminalGrid';
+import type { SessionMetrics } from '../../types';
 
 interface AgentSession {
     id: string;
@@ -73,10 +75,15 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const [agentCount, setAgentCount] = useState(1);
     const [injectContext, setInjectContext] = useState(true);
     const [launchMode, setLaunchMode] = useState<'external' | 'embedded'>('embedded');
+    const [selectedModel, setSelectedModel] = useState('');
+    const [launchInstructions, setLaunchInstructions] = useState('');
+    const [taskMode, setTaskMode] = useState(false);
 
     const [view, setView] = useState<'dashboard' | 'grid'>('dashboard');
     const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
     const [embeddedSessionIds] = useState<Set<string>>(() => new Set());
+    const [taskSessionIds] = useState<Set<string>>(() => new Set());
+    const [sessionMetrics, setSessionMetrics] = useState<Map<string, SessionMetrics>>(() => new Map());
 
     const loadSessions = useCallback(async () => {
         try {
@@ -114,6 +121,10 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     }, [loadSessions, loadDiff, loadPorts]);
 
     const handleLaunch = async () => {
+        if (taskMode && !launchInstructions.trim()) {
+            toast.error('Instructions are required for task mode');
+            return;
+        }
         setIsLaunching(true);
         try {
             if (launchMode === 'embedded') {
@@ -123,17 +134,26 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                         agentType: selectedAgent,
                         projectId,
                         projectPath,
-                        model: null,
-                        instructions: null,
+                        model: selectedModel || null,
+                        instructions: launchInstructions.trim() || null,
                         injectContext,
+                        taskMode: taskMode || null,
                         rows: null,
                         cols: null,
                     });
                     embeddedSessionIds.add(session.id);
+                    if (taskMode) taskSessionIds.add(session.id);
                     tm.create(session.id, (status) => {
                         setSessions(prev => prev.map(s =>
                             s.id === session.id ? { ...s, status } : s
                         ));
+                        if (status === 'stopped') {
+                            invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId: session.id })
+                                .then(m => {
+                                    if (m) setSessionMetrics(prev => new Map(prev).set(session.id, m));
+                                })
+                                .catch(() => {});
+                        }
                     });
                     launched.push(session);
                 }
@@ -147,7 +167,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     count: agentCount,
                     projectId,
                     projectPath,
-                    instructions: null,
+                    instructions: launchInstructions.trim() || null,
                     injectContext,
                 });
                 setSessions(prev => [...prev, ...newSessions]);
@@ -410,6 +430,44 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                             <span className="text-[11px] text-muted-foreground">Inject context</span>
                                         </label>
                                     </div>
+                                    {selectedAgent === 'claude' && launchMode === 'embedded' && (
+                                        <div className="flex items-center gap-4 flex-wrap">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[11px] text-muted-foreground">Model:</span>
+                                                <select
+                                                    value={selectedModel}
+                                                    onChange={e => setSelectedModel(e.target.value)}
+                                                    className="px-2 py-1.5 rounded-md text-[11px] bg-foreground/4 text-foreground border border-border focus:outline-none focus:ring-1 focus:ring-foreground/20"
+                                                >
+                                                    <option value="">Default</option>
+                                                    <option value="claude-sonnet-5">Sonnet 5</option>
+                                                    <option value="claude-opus-4-8">Opus 4.8</option>
+                                                    <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                                                </select>
+                                            </div>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={taskMode}
+                                                    onChange={e => setTaskMode(e.target.checked)}
+                                                    className="rounded border-border accent-foreground w-3.5 h-3.5"
+                                                />
+                                                <span className="text-[11px] text-muted-foreground">
+                                                    Task mode
+                                                </span>
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium">
+                                                    autonomous
+                                                </span>
+                                            </label>
+                                        </div>
+                                    )}
+                                    <textarea
+                                        value={launchInstructions}
+                                        onChange={e => setLaunchInstructions(e.target.value)}
+                                        placeholder={taskMode ? "Task instructions (required)... e.g. 'Fix the login bug in src/auth.ts'" : "Instructions for the agent (optional)... e.g. 'Fix the login bug in src/auth.ts'"}
+                                        rows={2}
+                                        className="w-full px-3 py-2 rounded-md text-[12px] bg-foreground/4 text-foreground border border-border placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-foreground/20 resize-none"
+                                    />
                                     <button
                                         onClick={handleLaunch}
                                         disabled={isLaunching}
@@ -440,6 +498,8 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                                 onRemove={handleRemove}
                                                 onFocus={() => handleSessionFocus(session)}
                                                 isEmbedded={embeddedSessionIds.has(session.id)}
+                                                isTask={taskSessionIds.has(session.id)}
+                                                metrics={sessionMetrics.get(session.id)}
                                             />
                                         ))}
                                     </div>
@@ -459,6 +519,8 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                                 onRemove={handleRemove}
                                                 onFocus={() => handleSessionFocus(session)}
                                                 isEmbedded={embeddedSessionIds.has(session.id)}
+                                                isTask={taskSessionIds.has(session.id)}
+                                                metrics={sessionMetrics.get(session.id)}
                                             />
                                         ))}
                                     </div>
@@ -609,9 +671,24 @@ interface SessionRowProps {
     onRemove: (id: string) => void;
     onFocus: () => void;
     isEmbedded?: boolean;
+    isTask?: boolean;
+    metrics?: SessionMetrics;
 }
 
-const SessionRow: React.FC<SessionRowProps> = ({ session, onStop, onRemove, onFocus, isEmbedded }) => {
+function formatTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+}
+
+function formatDuration(ms: number): string {
+    const s = ms / 1000;
+    if (s < 60) return `${s.toFixed(1)}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m ${Math.round(s % 60)}s`;
+}
+
+const SessionRow: React.FC<SessionRowProps> = ({ session, onStop, onRemove, onFocus, isEmbedded, isTask, metrics }) => {
     const config = getAgentConfig(session.agent_type);
     const isRunning = session.status === 'running';
     const Icon = config.icon;
@@ -629,8 +706,14 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, onStop, onRemove, onFo
                 <div className="flex items-center gap-2">
                     <span className="text-[13px] font-medium text-foreground truncate">{session.display_name}</span>
                     <span className="text-[10px] text-muted-foreground/50">{config.label}</span>
-                    {isEmbedded && (
+                    {isEmbedded && !isTask && (
                         <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/10 text-sky-400 font-medium">embedded</span>
+                    )}
+                    {isTask && (
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium flex items-center gap-0.5">
+                            <ListChecks className="w-2.5 h-2.5" />
+                            task
+                        </span>
                     )}
                 </div>
                 <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground/50">
@@ -642,6 +725,13 @@ const SessionRow: React.FC<SessionRowProps> = ({ session, onStop, onRemove, onFo
                         <span className="flex items-center gap-1 text-emerald-400/60">
                             <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
                             running
+                        </span>
+                    )}
+                    {metrics && (
+                        <span className="flex items-center gap-2 font-mono text-[10px] tabular-nums">
+                            <span>{formatTokens(metrics.input_tokens)}in + {formatTokens(metrics.output_tokens)}out</span>
+                            <span>${metrics.cost_usd.toFixed(4)}</span>
+                            <span>{formatDuration(metrics.duration_ms)}</span>
                         </span>
                     )}
                 </div>

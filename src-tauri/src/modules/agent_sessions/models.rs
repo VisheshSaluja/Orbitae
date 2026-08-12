@@ -39,3 +39,25 @@ pub struct LaunchRequest {
 
 /// Shared, thread-safe container for active agent sessions keyed by session ID.
 pub type AgentSessionState = Arc<Mutex<HashMap<String, AgentSession>>>;
+
+/// A single structured event captured from an agent's JSON event stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEvent {
+    pub id: i64,
+    pub session_id: String,
+    pub event_type: String,
+    pub payload: String,
+    pub created_at: String,
+}
+
+/// Aggregated metrics extracted from a session's final `result` event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMetrics {
+    pub session_id: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub duration_ms: u64,
+    pub num_turns: u32,
+    pub is_error: bool,
+}

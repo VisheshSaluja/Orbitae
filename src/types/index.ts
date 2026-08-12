@@ -199,3 +199,21 @@ export interface AgentSession {
     project_id: string;
     created_at: string;
 }
+
+export interface SessionEvent {
+    id: number;
+    session_id: string;
+    event_type: string;
+    payload: string;
+    created_at: string;
+}
+
+export interface SessionMetrics {
+    session_id: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number;
+    duration_ms: number;
+    num_turns: number;
+    is_error: boolean;
+}

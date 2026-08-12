@@ -1,11 +1,14 @@
 use tauri::{command, AppHandle, State};
 use sqlx::SqlitePool;
 use super::embedded::EmbeddedSessionMap;
-use super::models::{AgentSession, AgentSessionState, LaunchRequest};
+use super::event_repository::SessionEventRepository;
+use super::events::AutonomousSessionMap;
+use super::models::{AgentSession, AgentSessionState, LaunchRequest, SessionEvent, SessionMetrics};
 use super::repository::AgentSessionRepository;
 use super::service::AgentSessionService;
 use crate::modules::ai::repository::AiRepository;
 use crate::modules::vault::service::VaultService;
+use crate::shared::validation;
 
 /// Maximum number of agent sessions that can be launched in a single request.
 const MAX_LAUNCH_COUNT: u32 = 6;
@@ -26,6 +29,14 @@ pub async fn launch_agent_sessions(
     instructions: Option<String>,
     inject_context: Option<bool>,
 ) -> Result<Vec<AgentSession>, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+
+    let allowed_agents = ["claude", "codex", "custom"];
+    if !allowed_agents.contains(&agent_type.as_str()) {
+        return Err(format!("Unknown agent type: {}", agent_type));
+    }
+
     if count == 0 || count > MAX_LAUNCH_COUNT {
         return Err(format!(
             "Session count must be between 1 and {}, got {}",
@@ -69,9 +80,13 @@ pub async fn launch_agent_sessions(
     let repo = AgentSessionRepository::new(pool.inner().clone());
     {
         let mut session_map = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        let strip_instructions = inject_context.unwrap_or(false);
         for session in &sessions {
             session_map.insert(session.id.clone(), session.clone());
-            let s = session.clone();
+            let mut s = session.clone();
+            if strip_instructions {
+                s.instructions = None;
+            }
             let repo_ref = AgentSessionRepository::new(pool.inner().clone());
             tokio::spawn(async move {
                 if let Err(e) = repo_ref.insert(&s).await {
@@ -108,27 +123,47 @@ pub async fn list_agent_sessions(
 }
 
 /// Stop a running agent session by its ID.
+///
+/// Handles embedded PTY, autonomous task, and external Terminal.app sessions.
 #[command]
 pub async fn stop_agent_session(
     state: State<'_, AgentSessionState>,
+    embedded: State<'_, EmbeddedSessionMap>,
+    autonomous: State<'_, AutonomousSessionMap>,
     pool: State<'_, SqlitePool>,
     session_id: String,
 ) -> Result<(), String> {
-    let needs_hydrate = {
-        let sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-        !sessions.contains_key(&session_id)
-    };
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
 
-    if needs_hydrate {
-        let repo = AgentSessionRepository::new(pool.inner().clone());
-        if let Ok(Some(db_session)) = repo.get_by_id(&session_id).await {
-            let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-            sessions.insert(session_id.clone(), db_session);
+    if super::embedded::is_alive(embedded.inner(), &session_id) {
+        super::embedded::stop(embedded.inner(), &session_id)?;
+    } else if super::events::is_autonomous_alive(autonomous.inner(), &session_id) {
+        super::events::stop_autonomous(autonomous.inner(), &session_id)?;
+    } else {
+        let needs_hydrate = {
+            let sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+            !sessions.contains_key(&session_id)
+        };
+
+        if needs_hydrate {
+            let repo = AgentSessionRepository::new(pool.inner().clone());
+            if let Ok(Some(db_session)) = repo.get_by_id(&session_id).await {
+                let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+                sessions.insert(session_id.clone(), db_session);
+            }
         }
+
+        AgentSessionService::stop_session(state.inner(), &session_id)
+            .map_err(|e| format!("Failed to stop session: {}", e))?;
     }
 
-    AgentSessionService::stop_session(state.inner(), &session_id)
-        .map_err(|e| format!("Failed to stop session: {}", e))?;
+    // Update in-memory state
+    {
+        let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
+        if let Some(session) = sessions.get_mut(&session_id) {
+            session.status = "stopped".to_string();
+        }
+    }
 
     let repo = AgentSessionRepository::new(pool.inner().clone());
     repo.update_status(&session_id, "stopped").await
@@ -146,6 +181,8 @@ pub async fn remove_agent_session(
     pool: State<'_, SqlitePool>,
     session_id: String,
 ) -> Result<(), String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
     // Stop if running
     {
         let sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
@@ -180,6 +217,8 @@ pub async fn get_project_context_preview(
     project_id: String,
     project_path: String,
 ) -> Result<String, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
     super::context::build_project_context(pool.inner(), &project_id, &project_path)
         .await
         .map_err(|e| format!("Failed to build context: {}", e))
@@ -204,6 +243,7 @@ pub async fn focus_agent_terminals() -> Result<(), String> {
 pub async fn get_session_diff(
     project_path: String,
 ) -> Result<SessionDiff, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
     let expanded = crate::shared::utils::expand_path(&project_path);
 
     let stat_output = std::process::Command::new("git")
@@ -289,6 +329,7 @@ pub struct FileDiffStat {
 pub async fn scan_listening_ports(
     project_path: String,
 ) -> Result<Vec<ListeningPort>, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
     let output = std::process::Command::new("lsof")
         .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
         .output()
@@ -365,15 +406,19 @@ fn get_process_cwd(pid: u32) -> Option<String> {
     None
 }
 
-/// Launch an embedded agent session inside Orbitae's own PTY.
+/// Launch an embedded agent session inside Orbitae.
 ///
-/// Unlike `launch_agent_sessions` which opens Terminal.app, this spawns the
-/// agent as a child process. Output is streamed to the frontend via Tauri
-/// events (`agent-output-{id}`), and input is accepted via `write_to_embedded_session`.
+/// In interactive mode (default), spawns the agent in a PTY — output is
+/// streamed via `agent-output-{id}` and input via `write_to_embedded_session`.
+///
+/// In task mode (`task_mode: true`), runs with `--print --output-format stream-json`
+/// for structured event capture. Events are logged to `session_events` and
+/// emitted as `agent-event-{id}`. Instructions are required in task mode.
 #[command]
 pub async fn launch_embedded_session(
     state: State<'_, AgentSessionState>,
     embedded: State<'_, EmbeddedSessionMap>,
+    autonomous: State<'_, AutonomousSessionMap>,
     pool: State<'_, SqlitePool>,
     app_handle: AppHandle,
     agent_type: String,
@@ -382,9 +427,23 @@ pub async fn launch_embedded_session(
     model: Option<String>,
     instructions: Option<String>,
     inject_context: Option<bool>,
+    task_mode: Option<bool>,
     rows: Option<u16>,
     cols: Option<u16>,
 ) -> Result<AgentSession, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+
+    let allowed_agents = ["claude", "codex", "custom"];
+    if !allowed_agents.contains(&agent_type.as_str()) {
+        return Err(format!("Unknown agent type: {}", agent_type));
+    }
+    if let Some(ref m) = model {
+        if m.starts_with('-') {
+            return Err("Invalid model name".to_string());
+        }
+    }
+
     let final_instructions = if inject_context.unwrap_or(false) {
         let context = super::context::build_project_context(
             pool.inner(), &project_id, &project_path
@@ -398,27 +457,54 @@ pub async fn launch_embedded_session(
         instructions
     };
 
+    let is_task = task_mode.unwrap_or(false);
+
     let id = uuid::Uuid::new_v4().to_string();
+    let mode_label = if is_task { "task" } else { "embedded" };
     let display_name = format!(
-        "{} (embedded)",
+        "{} ({})",
         match agent_type.as_str() {
             "claude" => "Claude",
             "codex" => "Codex",
             _ => "Terminal",
-        }
+        },
+        mode_label
     );
 
-    let pid = super::embedded::spawn_embedded(
-        &id,
-        &agent_type,
-        &project_path,
-        model.as_deref(),
-        final_instructions.as_deref(),
-        rows.unwrap_or(24),
-        cols.unwrap_or(80),
-        embedded.inner(),
-        &app_handle,
-    )?;
+    let pid = if is_task {
+        let prompt = final_instructions
+            .as_deref()
+            .ok_or_else(|| "Instructions are required for task mode".to_string())?;
+
+        super::events::spawn_autonomous(
+            &id,
+            &project_path,
+            model.as_deref(),
+            prompt,
+            autonomous.inner(),
+            pool.inner(),
+            &app_handle,
+            state.inner(),
+        )?
+    } else {
+        super::embedded::spawn_embedded(
+            &id,
+            &agent_type,
+            &project_path,
+            model.as_deref(),
+            final_instructions.as_deref(),
+            rows.unwrap_or(24),
+            cols.unwrap_or(80),
+            embedded.inner(),
+            &app_handle,
+        )?
+    };
+
+    let persisted_instructions = if inject_context.unwrap_or(false) {
+        None
+    } else {
+        final_instructions.clone()
+    };
 
     let session = AgentSession {
         id: id.clone(),
@@ -427,11 +513,10 @@ pub async fn launch_embedded_session(
         status: "running".to_string(),
         pid: Some(pid),
         project_id,
-        instructions: final_instructions,
+        instructions: persisted_instructions,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    // Persist to memory + SQLite
     {
         let mut sessions = state.lock().map_err(|e| format!("State lock error: {}", e))?;
         sessions.insert(id.clone(), session.clone());
@@ -466,6 +551,34 @@ pub async fn resize_embedded_session(
     cols: u16,
 ) -> Result<(), String> {
     super::embedded::resize(embedded.inner(), &session_id, rows, cols)
+}
+
+/// Retrieve structured events for a session (task mode sessions only).
+#[command]
+pub async fn get_session_events(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<Vec<SessionEvent>, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
+    let repo = SessionEventRepository::new(pool.inner().clone());
+    repo.list_by_session(&session_id)
+        .await
+        .map_err(|e| format!("Failed to fetch session events: {}", e))
+}
+
+/// Get aggregated metrics for a session (cost, tokens, duration).
+#[command]
+pub async fn get_session_metrics(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<Option<SessionMetrics>, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
+    let repo = SessionEventRepository::new(pool.inner().clone());
+    repo.get_session_metrics(&session_id)
+        .await
+        .map_err(|e| format!("Failed to fetch session metrics: {}", e))
 }
 
 /// Resolve the API key for a given agent type.

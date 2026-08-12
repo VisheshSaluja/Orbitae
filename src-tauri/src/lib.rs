@@ -37,6 +37,10 @@ pub fn run() {
       let embedded_state: modules::agent_sessions::embedded::EmbeddedSessionMap = Arc::new(Mutex::new(HashMap::new()));
       app_handle.manage(embedded_state);
 
+      // Initialize Autonomous (task mode) Session State
+      let autonomous_state: modules::agent_sessions::events::AutonomousSessionMap = Arc::new(Mutex::new(HashMap::new()));
+      app_handle.manage(autonomous_state);
+
       tauri::async_runtime::block_on(async {
           let pool = database::init_pool(&app_data_dir).await.expect("failed to init database");
 
@@ -135,6 +139,8 @@ pub fn run() {
         modules::agent_sessions::commands::launch_embedded_session,
         modules::agent_sessions::commands::write_to_embedded_session,
         modules::agent_sessions::commands::resize_embedded_session,
+        modules::agent_sessions::commands::get_session_events,
+        modules::agent_sessions::commands::get_session_metrics,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
