@@ -5,3 +5,4 @@ pub mod ai;
 pub mod mcp;
 pub mod playbooks;
 pub mod agent_sessions;
+pub mod router;

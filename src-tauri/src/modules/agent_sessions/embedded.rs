@@ -93,12 +93,9 @@ pub fn spawn_embedded(
         }
     });
 
-    let sid2 = session_id.to_string();
-    let handle2 = app_handle.clone();
     std::thread::spawn(move || {
         let mut child = child;
         let _ = child.wait();
-        let _ = handle2.emit(&format!("agent-exit-{}", sid2), ());
     });
 
     Ok(pid)

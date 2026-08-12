@@ -14,6 +14,41 @@ pub struct AutonomousSession {
 /// Thread-safe container for autonomous task sessions, keyed by session ID.
 pub type AutonomousSessionMap = Arc<Mutex<HashMap<String, AutonomousSession>>>;
 
+/// Permission handling for autonomous task sessions.
+///
+/// Task sessions run `claude --print` non-interactively, so they cannot prompt
+/// for tool permission mid-run. This selects how the spawned agent is allowed
+/// to act. Configured per project via the `autonomous_permission_mode` setting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TaskPermissionMode {
+    /// Auto-approve file edits only. Tools that still require permission (e.g.
+    /// arbitrary Bash) are blocked. Safe default. Maps to
+    /// `--permission-mode acceptEdits`.
+    AcceptEdits,
+    /// Skip all permission checks — fully autonomous. Maps to
+    /// `--dangerously-skip-permissions`. Opt-in per trusted project.
+    Skip,
+}
+
+impl TaskPermissionMode {
+    /// Parse from the project's `autonomous_permission_mode` setting value,
+    /// defaulting to the safe `AcceptEdits` mode for any unknown/missing value.
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("skip") => Self::Skip,
+            _ => Self::AcceptEdits,
+        }
+    }
+
+    /// CLI arguments to append to the `claude` command for this mode.
+    fn cli_args(self) -> &'static [&'static str] {
+        match self {
+            Self::AcceptEdits => &["--permission-mode", "acceptEdits"],
+            Self::Skip => &["--dangerously-skip-permissions"],
+        }
+    }
+}
+
 /// Spawn an autonomous task-mode agent session.
 ///
 /// Runs `claude --print --output-format stream-json` for structured output.
@@ -24,6 +59,7 @@ pub fn spawn_autonomous(
     project_path: &str,
     model: Option<&str>,
     prompt: &str,
+    permission_mode: TaskPermissionMode,
     sessions: &AutonomousSessionMap,
     pool: &SqlitePool,
     app_handle: &AppHandle,
@@ -35,10 +71,17 @@ pub fn spawn_autonomous(
     write_restricted_file(&ctx_path, prompt)
         .map_err(|e| format!("Failed to write context file: {}", e))?;
 
-    let mut cmd = build_task_command(&expanded, model, &ctx_path)?;
+    let mut cmd = build_task_command(&expanded, model, &ctx_path, permission_mode)?;
     cmd.current_dir(&expanded);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+
+    tracing::debug!(
+        session_id = %session_id,
+        project_path = %expanded,
+        ctx_path = %ctx_path,
+        "spawning autonomous task session"
+    );
 
     let mut child = cmd
         .spawn()
@@ -49,6 +92,7 @@ pub fn spawn_autonomous(
         .stdout
         .take()
         .ok_or_else(|| "Failed to capture stdout".to_string())?;
+    let stderr = child.stderr.take();
 
     {
         let mut map = sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -62,6 +106,25 @@ pub fn spawn_autonomous(
     let sessions_ref = sessions.clone();
     let state_ref = agent_state.clone();
     let ctx_cleanup = ctx_path.clone();
+
+    // Read stderr in a separate thread so errors are surfaced
+    if let Some(stderr) = stderr {
+        let stderr_handle = app_handle.clone();
+        let stderr_sid = session_id.to_string();
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                tracing::warn!(session = %stderr_sid, "agent stderr: {}", line);
+                let _ = stderr_handle.emit(
+                    &format!("agent-output-{}", stderr_sid),
+                    &format!("\x1b[31m{}\x1b[0m\r\n", line),
+                );
+            }
+        });
+    }
 
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
@@ -157,13 +220,19 @@ fn write_restricted_file(path: &str, content: &str) -> std::io::Result<()> {
 }
 
 /// Build the CLI command for `claude --print --output-format stream-json`.
+///
+/// `--verbose` is mandatory: the Claude CLI rejects `--output-format stream-json`
+/// in `--print` mode without it ("stream-json requires --verbose") and exits
+/// immediately with a non-zero status.
 fn build_task_command(
     project_path: &str,
     model: Option<&str>,
     ctx_path: &str,
+    permission_mode: TaskPermissionMode,
 ) -> Result<std::process::Command, String> {
     let mut cmd = std::process::Command::new("claude");
-    cmd.args(["--print", "--output-format", "stream-json"]);
+    cmd.args(["--print", "--output-format", "stream-json", "--verbose"]);
+    cmd.args(permission_mode.cli_args());
 
     if let Some(m) = model {
         cmd.args(["--model", m]);
@@ -188,9 +257,20 @@ fn build_task_command(
 }
 
 /// Convert a JSON event from `--output-format stream-json` into terminal-friendly text.
+///
+/// The stream schema (from `claude --print --output-format stream-json --verbose`):
+/// - `system` events carry a `subtype`; only `init` is user-facing (it has `model`).
+///   `hook_started`/`hook_response` are internal noise and are dropped.
+/// - `assistant` events hold a `message.content` array of blocks. Each block is
+///   either `{type: "text", text}` or `{type: "tool_use", name, input}`.
+/// - `result` reports `total_cost_usd`, `duration_ms`, and `usage.{input,output}_tokens`.
 fn format_event_for_display(json: &serde_json::Value) -> String {
     match json.get("type").and_then(|t| t.as_str()) {
         Some("system") => {
+            // Only surface the init event; hooks and other system chatter are noise.
+            if json.get("subtype").and_then(|s| s.as_str()) != Some("init") {
+                return String::new();
+            }
             let model = json
                 .get("model")
                 .and_then(|m| m.as_str())
@@ -198,38 +278,41 @@ fn format_event_for_display(json: &serde_json::Value) -> String {
             format!("\x1b[90m▸ session started (model: {})\x1b[0m\r\n", model)
         }
         Some("assistant") => {
-            if let Some(content) = json.pointer("/message/content") {
-                if let Some(arr) = content.as_array() {
-                    let text: Vec<&str> = arr
-                        .iter()
-                        .filter_map(|c| {
-                            if c.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                c.get("text").and_then(|t| t.as_str())
-                            } else {
-                                None
+            let content = match json.pointer("/message/content").and_then(|c| c.as_array()) {
+                Some(arr) => arr,
+                None => return String::new(),
+            };
+
+            let mut out = String::new();
+            for block in content {
+                match block.get("type").and_then(|t| t.as_str()) {
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            if !text.trim().is_empty() {
+                                out.push_str(text);
+                                out.push_str("\r\n");
                             }
-                        })
-                        .collect();
-                    if !text.is_empty() {
-                        return format!("{}\r\n", text.join(""));
+                        }
                     }
+                    Some("tool_use") => {
+                        let tool = block
+                            .get("name")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("tool");
+                        let detail = extract_tool_detail(block);
+                        if detail.is_empty() {
+                            out.push_str(&format!("\x1b[36m▸ {}\x1b[0m\r\n", tool));
+                        } else {
+                            out.push_str(&format!(
+                                "\x1b[36m▸ {}\x1b[0m \x1b[90m{}\x1b[0m\r\n",
+                                tool, detail
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
             }
-            String::new()
-        }
-        Some("tool_use") => {
-            let tool = json
-                .get("tool")
-                .or_else(|| json.get("name"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("unknown");
-
-            let detail = extract_tool_detail(json);
-            if detail.is_empty() {
-                format!("\x1b[36m▸ {}\x1b[0m\r\n", tool)
-            } else {
-                format!("\x1b[36m▸ {}\x1b[0m \x1b[90m{}\x1b[0m\r\n", tool, detail)
-            }
+            out
         }
         Some("result") => {
             let input_tokens = json
@@ -241,7 +324,7 @@ fn format_event_for_display(json: &serde_json::Value) -> String {
                 .and_then(|t| t.as_i64())
                 .unwrap_or(0);
             let cost = json
-                .get("cost_usd")
+                .get("total_cost_usd")
                 .and_then(|c| c.as_f64())
                 .unwrap_or(0.0);
             let duration_ms = json
@@ -250,18 +333,22 @@ fn format_event_for_display(json: &serde_json::Value) -> String {
                 .unwrap_or(0);
             let duration_s = duration_ms as f64 / 1000.0;
 
+            let is_error = json.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+            let label = if is_error { "Failed" } else { "Done" };
+            let color = if is_error { "31" } else { "90" };
+
             format!(
-                "\r\n\x1b[90m━━━ Done | {:.1}s | {}in + {}out tokens | ${:.4}\x1b[0m\r\n",
-                duration_s, input_tokens, output_tokens, cost
+                "\r\n\x1b[{}m━━━ {} | {:.1}s | {}in + {}out tokens | ${:.4}\x1b[0m\r\n",
+                color, label, duration_s, input_tokens, output_tokens, cost
             )
         }
         _ => String::new(),
     }
 }
 
-/// Extract a short detail string from a tool_use event for display.
-fn extract_tool_detail(json: &serde_json::Value) -> String {
-    let input = match json.get("input") {
+/// Extract a short detail string from a tool_use content block for display.
+fn extract_tool_detail(block: &serde_json::Value) -> String {
+    let input = match block.get("input") {
         Some(i) => i,
         None => return String::new(),
     };
@@ -271,13 +358,17 @@ fn extract_tool_detail(json: &serde_json::Value) -> String {
     }
     if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
         let truncated: String = cmd.chars().take(60).collect();
-        if cmd.len() > 60 {
+        if cmd.chars().count() > 60 {
             return format!("{}...", truncated);
         }
         return truncated;
     }
     if let Some(query) = input.get("query").and_then(|q| q.as_str()) {
         let truncated: String = query.chars().take(40).collect();
+        return truncated;
+    }
+    if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
+        let truncated: String = pattern.chars().take(40).collect();
         return truncated;
     }
     String::new()
@@ -297,22 +388,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_tool_use_with_file() {
+    fn format_tool_use_nested_in_assistant() {
         let json = serde_json::json!({
-            "type": "tool_use",
-            "tool": "Read",
-            "input": {"file_path": "src/main.rs"}
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "I'll read that file."},
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": "src/main.rs"}}
+                ]
+            }
         });
         let display = format_event_for_display(&json);
+        assert!(display.contains("I'll read that file."));
         assert!(display.contains("Read"));
         assert!(display.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn format_bash_tool_use() {
+        let json = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls /tmp", "description": "list"}}
+                ]
+            }
+        });
+        let display = format_event_for_display(&json);
+        assert!(display.contains("Bash"));
+        assert!(display.contains("ls /tmp"));
     }
 
     #[test]
     fn format_result_event() {
         let json = serde_json::json!({
             "type": "result",
-            "cost_usd": 0.05,
+            "subtype": "success",
+            "is_error": false,
+            "total_cost_usd": 0.05,
             "duration_ms": 12000,
             "usage": {"input_tokens": 5000, "output_tokens": 2000}
         });
@@ -320,6 +433,20 @@ mod tests {
         assert!(display.contains("Done"));
         assert!(display.contains("5000in"));
         assert!(display.contains("2000out"));
+        assert!(display.contains("$0.0500"));
+    }
+
+    #[test]
+    fn format_result_error() {
+        let json = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "total_cost_usd": 0.0,
+            "duration_ms": 500,
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        });
+        let display = format_event_for_display(&json);
+        assert!(display.contains("Failed"));
     }
 
     #[test]
@@ -336,12 +463,67 @@ mod tests {
     }
 
     #[test]
-    fn format_system_event() {
+    fn format_system_init_shows_model() {
         let json = serde_json::json!({
             "type": "system",
+            "subtype": "init",
             "model": "claude-sonnet-5"
         });
         let display = format_event_for_display(&json);
         assert!(display.contains("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn format_system_hook_is_suppressed() {
+        let json = serde_json::json!({
+            "type": "system",
+            "subtype": "hook_started",
+            "hook_name": "SessionStart"
+        });
+        let display = format_event_for_display(&json);
+        assert!(display.is_empty());
+    }
+
+    #[test]
+    fn permission_mode_defaults_to_accept_edits() {
+        assert_eq!(TaskPermissionMode::from_setting(None), TaskPermissionMode::AcceptEdits);
+        assert_eq!(TaskPermissionMode::from_setting(Some("")), TaskPermissionMode::AcceptEdits);
+        assert_eq!(TaskPermissionMode::from_setting(Some("garbage")), TaskPermissionMode::AcceptEdits);
+        assert_eq!(TaskPermissionMode::from_setting(Some("acceptEdits")), TaskPermissionMode::AcceptEdits);
+    }
+
+    #[test]
+    fn permission_mode_parses_skip() {
+        assert_eq!(TaskPermissionMode::from_setting(Some("skip")), TaskPermissionMode::Skip);
+    }
+
+    #[test]
+    fn permission_mode_cli_args() {
+        assert_eq!(
+            TaskPermissionMode::AcceptEdits.cli_args(),
+            &["--permission-mode", "acceptEdits"]
+        );
+        assert_eq!(
+            TaskPermissionMode::Skip.cli_args(),
+            &["--dangerously-skip-permissions"]
+        );
+    }
+
+    #[test]
+    fn task_command_includes_verbose_and_permission() {
+        let cmd = build_task_command(
+            "/tmp/proj",
+            None,
+            "/tmp/ctx.md",
+            TaskPermissionMode::Skip,
+        )
+        .unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"--verbose".to_string()));
+        assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(args.contains(&"stream-json".to_string()));
     }
 }

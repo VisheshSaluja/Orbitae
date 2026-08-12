@@ -39,10 +39,10 @@ interface ManagedTerminal {
 
 const instances = new Map<string, ManagedTerminal>();
 
-export function create(
+export async function create(
     sessionId: string,
     onStatusChange?: (status: 'running' | 'stopped') => void,
-): void {
+): Promise<void> {
     if (instances.has(sessionId)) return;
 
     const terminal = new Terminal({
@@ -72,15 +72,17 @@ export function create(
         onStatusChange,
     };
 
-    listen<string>(`agent-output-${sessionId}`, (event) => {
+    const outputUnlisten = await listen<string>(`agent-output-${sessionId}`, (event) => {
         terminal.write(event.payload);
-    }).then(fn => managed.cleanups.push(fn));
+    });
+    managed.cleanups.push(outputUnlisten);
 
-    listen(`agent-exit-${sessionId}`, () => {
+    const exitUnlisten = await listen(`agent-exit-${sessionId}`, () => {
         terminal.write('\r\n\x1b[90m--- session ended ---\x1b[0m\r\n');
         managed.status = 'stopped';
         managed.onStatusChange?.('stopped');
-    }).then(fn => managed.cleanups.push(fn));
+    });
+    managed.cleanups.push(exitUnlisten);
 
     instances.set(sessionId, managed);
 }

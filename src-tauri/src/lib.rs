@@ -52,6 +52,11 @@ pub fn run() {
           app_handle.manage(pool);
       });
 
+      // Initialize Semantic Router
+      let router: modules::router::classifier::RouterState =
+          std::sync::Arc::new(modules::router::classifier::SemanticRouter::new());
+      app_handle.manage(router);
+
       if let Err(e) = modules::mcp::service::McpService::ensure_token() {
           tracing::warn!("Failed to provision MCP auth token: {}", e);
       }
@@ -141,6 +146,8 @@ pub fn run() {
         modules::agent_sessions::commands::resize_embedded_session,
         modules::agent_sessions::commands::get_session_events,
         modules::agent_sessions::commands::get_session_metrics,
+        // Semantic Router
+        modules::router::commands::route_request,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

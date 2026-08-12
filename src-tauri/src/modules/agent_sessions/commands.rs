@@ -244,67 +244,72 @@ pub async fn get_session_diff(
     project_path: String,
 ) -> Result<SessionDiff, String> {
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
-    let expanded = crate::shared::utils::expand_path(&project_path);
 
-    let stat_output = std::process::Command::new("git")
-        .args(["diff", "--stat", "HEAD"])
-        .current_dir(&expanded)
-        .output()
-        .map_err(|e| format!("git diff failed: {}", e))?;
+    tokio::task::spawn_blocking(move || {
+        let expanded = crate::shared::utils::expand_path(&project_path);
 
-    let stat = if stat_output.status.success() {
-        String::from_utf8_lossy(&stat_output.stdout).trim().to_string()
-    } else {
-        String::new()
-    };
+        let stat_output = std::process::Command::new("git")
+            .args(["diff", "--stat", "HEAD"])
+            .current_dir(&expanded)
+            .output()
+            .map_err(|e| format!("git diff failed: {}", e))?;
 
-    let files_output = std::process::Command::new("git")
-        .args(["diff", "--name-only", "HEAD"])
-        .current_dir(&expanded)
-        .output()
-        .map_err(|e| format!("git diff failed: {}", e))?;
+        let stat = if stat_output.status.success() {
+            String::from_utf8_lossy(&stat_output.stdout).trim().to_string()
+        } else {
+            String::new()
+        };
 
-    let changed_files: Vec<String> = if files_output.status.success() {
-        String::from_utf8_lossy(&files_output.stdout)
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
-            .collect()
-    } else {
-        Vec::new()
-    };
+        let files_output = std::process::Command::new("git")
+            .args(["diff", "--name-only", "HEAD"])
+            .current_dir(&expanded)
+            .output()
+            .map_err(|e| format!("git diff failed: {}", e))?;
 
-    let numstat_output = std::process::Command::new("git")
-        .args(["diff", "--numstat", "HEAD"])
-        .current_dir(&expanded)
-        .output()
-        .map_err(|e| format!("git diff failed: {}", e))?;
+        let changed_files: Vec<String> = if files_output.status.success() {
+            String::from_utf8_lossy(&files_output.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-    let file_stats: Vec<FileDiffStat> = if numstat_output.status.success() {
-        String::from_utf8_lossy(&numstat_output.stdout)
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 3 {
-                    Some(FileDiffStat {
-                        file: parts[2].to_string(),
-                        additions: parts[0].parse().unwrap_or(0),
-                        deletions: parts[1].parse().unwrap_or(0),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+        let numstat_output = std::process::Command::new("git")
+            .args(["diff", "--numstat", "HEAD"])
+            .current_dir(&expanded)
+            .output()
+            .map_err(|e| format!("git diff failed: {}", e))?;
 
-    Ok(SessionDiff {
-        stat_summary: stat,
-        changed_files,
-        file_stats,
+        let file_stats: Vec<FileDiffStat> = if numstat_output.status.success() {
+            String::from_utf8_lossy(&numstat_output.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    if parts.len() >= 3 {
+                        Some(FileDiffStat {
+                            file: parts[2].to_string(),
+                            additions: parts[0].parse().unwrap_or(0),
+                            deletions: parts[1].parse().unwrap_or(0),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(SessionDiff {
+            stat_summary: stat,
+            changed_files,
+            file_stats,
+        })
     })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))?
 }
 
 #[derive(serde::Serialize)]
@@ -330,54 +335,59 @@ pub async fn scan_listening_ports(
     project_path: String,
 ) -> Result<Vec<ListeningPort>, String> {
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
-    let output = std::process::Command::new("lsof")
-        .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
-        .output()
-        .map_err(|e| format!("Failed to run lsof: {}", e))?;
 
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("lsof")
+            .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
+            .output()
+            .map_err(|e| format!("Failed to run lsof: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let expanded_path = crate::shared::utils::expand_path(&project_path);
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
 
-    let mut ports: Vec<ListeningPort> = Vec::new();
-    let mut seen_ports = std::collections::HashSet::new();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let expanded_path = crate::shared::utils::expand_path(&project_path);
 
-    for line in stdout.lines().skip(1) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 9 { continue; }
+        let mut ports: Vec<ListeningPort> = Vec::new();
+        let mut seen_ports = std::collections::HashSet::new();
 
-        let process_name = cols[0].to_string();
-        let pid_str = cols[1];
-        let name_col = cols[cols.len() - 1];
+        for line in stdout.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() < 9 { continue; }
 
-        let port: u16 = match name_col.rsplit(':').next().and_then(|p| p.parse().ok()) {
-            Some(p) => p,
-            None => continue,
-        };
+            let process_name = cols[0].to_string();
+            let pid_str = cols[1];
+            let name_col = cols[cols.len() - 1];
 
-        if !seen_ports.insert(port) { continue; }
+            let port: u16 = match name_col.rsplit(':').next().and_then(|p| p.parse().ok()) {
+                Some(p) => p,
+                None => continue,
+            };
 
-        let pid: u32 = match pid_str.parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
+            if !seen_ports.insert(port) { continue; }
 
-        let cwd = get_process_cwd(pid);
-        let is_project = cwd.as_ref().map_or(false, |c| c.starts_with(&expanded_path));
+            let pid: u32 = match pid_str.parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
 
-        ports.push(ListeningPort {
-            port,
-            pid,
-            process: process_name,
-            is_project,
-        });
-    }
+            let cwd = get_process_cwd(pid);
+            let is_project = cwd.as_ref().map_or(false, |c| c.starts_with(&expanded_path));
 
-    ports.sort_by_key(|p| (!p.is_project, p.port));
-    Ok(ports)
+            ports.push(ListeningPort {
+                port,
+                pid,
+                process: process_name,
+                is_project,
+            });
+        }
+
+        ports.sort_by_key(|p| (!p.is_project, p.port));
+        Ok(ports)
+    })
+    .await
+    .map_err(|e| format!("task join failed: {e}"))?
 }
 
 #[derive(serde::Serialize)]
@@ -428,6 +438,7 @@ pub async fn launch_embedded_session(
     instructions: Option<String>,
     inject_context: Option<bool>,
     task_mode: Option<bool>,
+    session_id: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
 ) -> Result<AgentSession, String> {
@@ -442,6 +453,9 @@ pub async fn launch_embedded_session(
         if m.starts_with('-') {
             return Err("Invalid model name".to_string());
         }
+    }
+    if let Some(ref sid) = session_id {
+        validation::validate_id(sid).map_err(|e| e.to_string())?;
     }
 
     let final_instructions = if inject_context.unwrap_or(false) {
@@ -459,7 +473,7 @@ pub async fn launch_embedded_session(
 
     let is_task = task_mode.unwrap_or(false);
 
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mode_label = if is_task { "task" } else { "embedded" };
     let display_name = format!(
         "{} ({})",
@@ -476,11 +490,14 @@ pub async fn launch_embedded_session(
             .as_deref()
             .ok_or_else(|| "Instructions are required for task mode".to_string())?;
 
+        let permission_mode = resolve_task_permission_mode(pool.inner(), &project_id).await;
+
         super::events::spawn_autonomous(
             &id,
             &project_path,
             model.as_deref(),
             prompt,
+            permission_mode,
             autonomous.inner(),
             pool.inner(),
             &app_handle,
@@ -579,6 +596,32 @@ pub async fn get_session_metrics(
     repo.get_session_metrics(&session_id)
         .await
         .map_err(|e| format!("Failed to fetch session metrics: {}", e))
+}
+
+/// Resolve the autonomous task permission mode from a project's settings.
+///
+/// Reads the `autonomous_permission_mode` key from the project's settings JSON,
+/// defaulting to the safe `AcceptEdits` mode if unset, unparseable, or unknown.
+async fn resolve_task_permission_mode(
+    pool: &SqlitePool,
+    project_id: &str,
+) -> super::events::TaskPermissionMode {
+    use crate::modules::projects::repository::ProjectRepository;
+
+    let setting = ProjectRepository::new(pool.clone())
+        .get_project(project_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|p| p.settings)
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| {
+            v.get("autonomous_permission_mode")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        });
+
+    super::events::TaskPermissionMode::from_setting(setting.as_deref())
 }
 
 /// Resolve the API key for a given agent type.

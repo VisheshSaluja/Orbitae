@@ -165,7 +165,13 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({ projectId }) => {
 
     const saveSettings = async () => {
         try {
-            const settingsObj: ProjectSettings = { note_labels: tempLabels };
+            // Merge into existing settings so we don't clobber other keys
+            // (e.g. autonomous_permission_mode).
+            let existing: Partial<ProjectSettings> = {};
+            if (project?.settings) {
+                try { existing = JSON.parse(project.settings); } catch { /* ignore */ }
+            }
+            const settingsObj: ProjectSettings = { ...existing, note_labels: tempLabels };
             await updateProjectSettings(projectId, JSON.stringify(settingsObj));
             toast.success("Labels updated");
             setIsSettingsOpen(false);

@@ -28,8 +28,12 @@ export interface ProjectNote {
     updated_at: string;
 }
 
+export type AutonomousPermissionMode = 'acceptEdits' | 'skip';
+
 export interface ProjectSettings {
     note_labels: Record<string, string>;
+    /** How autonomous task sessions handle tool permissions. Defaults to 'acceptEdits'. */
+    autonomous_permission_mode?: AutonomousPermissionMode;
 }
 
 export interface GitStatus {

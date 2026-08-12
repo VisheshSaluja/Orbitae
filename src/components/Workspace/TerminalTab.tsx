@@ -9,6 +9,7 @@ import {
     ListChecks,
 } from 'lucide-react';
 import { TerminalGrid } from './TerminalGrid';
+import { SmartCommandStrip } from './SmartCommandStrip';
 import type { SessionMetrics } from '../../types';
 
 interface AgentSession {
@@ -130,6 +131,19 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
             if (launchMode === 'embedded') {
                 const launched: AgentSession[] = [];
                 for (let i = 0; i < agentCount; i++) {
+                    const sessionId = crypto.randomUUID();
+                    await tm.create(sessionId, (status) => {
+                        setSessions(prev => prev.map(s =>
+                            s.id === sessionId ? { ...s, status } : s
+                        ));
+                        if (status === 'stopped') {
+                            invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId })
+                                .then(m => {
+                                    if (m) setSessionMetrics(prev => new Map(prev).set(sessionId, m));
+                                })
+                                .catch(() => {});
+                        }
+                    });
                     const session = await invokeCommand<AgentSession>('launch_embedded_session', {
                         agentType: selectedAgent,
                         projectId,
@@ -138,23 +152,12 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                         instructions: launchInstructions.trim() || null,
                         injectContext,
                         taskMode: taskMode || null,
+                        sessionId,
                         rows: null,
                         cols: null,
                     });
                     embeddedSessionIds.add(session.id);
                     if (taskMode) taskSessionIds.add(session.id);
-                    tm.create(session.id, (status) => {
-                        setSessions(prev => prev.map(s =>
-                            s.id === session.id ? { ...s, status } : s
-                        ));
-                        if (status === 'stopped') {
-                            invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId: session.id })
-                                .then(m => {
-                                    if (m) setSessionMetrics(prev => new Map(prev).set(session.id, m));
-                                })
-                                .catch(() => {});
-                        }
-                    });
                     launched.push(session);
                 }
                 setSessions(prev => [...prev, ...launched]);
@@ -230,6 +233,43 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
             toast.error('Failed to open editor');
         }
     };
+
+    const handleSmartTask = useCallback(async (prompt: string) => {
+        try {
+            const sessionId = crypto.randomUUID();
+            await tm.create(sessionId, (status) => {
+                setSessions(prev => prev.map(s =>
+                    s.id === sessionId ? { ...s, status } : s
+                ));
+                if (status === 'stopped') {
+                    invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId })
+                        .then(m => {
+                            if (m) setSessionMetrics(prev => new Map(prev).set(sessionId, m));
+                        })
+                        .catch(() => {});
+                }
+            });
+            const session = await invokeCommand<AgentSession>('launch_embedded_session', {
+                agentType: 'claude',
+                projectId,
+                projectPath,
+                model: selectedModel || null,
+                instructions: prompt,
+                injectContext: true,
+                taskMode: true,
+                sessionId,
+                rows: null,
+                cols: null,
+            });
+            embeddedSessionIds.add(session.id);
+            taskSessionIds.add(session.id);
+            setSessions(prev => [...prev, session]);
+            setView('grid');
+            toast.success(`Routed to agent: ${prompt.substring(0, 50)}...`);
+        } catch (err) {
+            toast.error(`Failed to launch: ${err}`);
+        }
+    }, [projectId, projectPath, selectedModel, embeddedSessionIds, taskSessionIds]);
 
     const runningSessions = sessions.filter(s => s.status === 'running');
     const stoppedSessions = sessions.filter(s => s.status !== 'running');
@@ -308,6 +348,13 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                 ) : (
                     <div className="flex-1 overflow-y-auto hide-scrollbar">
                         <div className="max-w-3xl mx-auto p-6 space-y-6">
+                            {/* Smart Command Strip */}
+                            <SmartCommandStrip
+                                projectId={projectId}
+                                projectPath={projectPath}
+                                onSpawnTask={handleSmartTask}
+                            />
+
                             {/* Quick actions bar */}
                             <div className="flex items-center gap-2 flex-wrap">
                                 <button
