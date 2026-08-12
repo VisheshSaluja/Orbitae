@@ -12,5 +12,7 @@
 //! [6] skills + GSD.
 
 pub mod backend;
+pub mod conversation;
 pub mod error;
 pub mod models;
+pub mod planner;
