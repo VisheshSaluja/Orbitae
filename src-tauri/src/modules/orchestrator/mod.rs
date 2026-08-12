@@ -15,4 +15,5 @@ pub mod backend;
 pub mod conversation;
 pub mod error;
 pub mod models;
+pub mod plan_ops;
 pub mod planner;
