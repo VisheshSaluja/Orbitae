@@ -41,7 +41,7 @@ impl TaskPermissionMode {
     }
 
     /// CLI arguments to append to the `claude` command for this mode.
-    fn cli_args(self) -> &'static [&'static str] {
+    pub(crate) fn cli_args(self) -> &'static [&'static str] {
         match self {
             Self::AcceptEdits => &["--permission-mode", "acceptEdits"],
             Self::Skip => &["--dangerously-skip-permissions"],

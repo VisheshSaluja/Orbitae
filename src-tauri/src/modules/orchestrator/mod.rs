@@ -11,5 +11,6 @@
 //! stream spike → [3] PlanSession + LitePlanner → [4] IPC + UI → [5] executor →
 //! [6] skills + GSD.
 
+pub mod backend;
 pub mod error;
 pub mod models;
