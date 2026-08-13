@@ -36,7 +36,10 @@ pub struct StepDraft {
 }
 
 /// Produces and revises plans over a conversation.
-pub trait Planner {
+///
+/// `Send` so a `Box<dyn Planner>` can live inside a `PlanSession` held in the
+/// app's session registry across threads.
+pub trait Planner: Send {
     /// Produce the first plan for a task.
     fn produce(&self, convo: &Conversation, task: &str) -> Result<PlanDraft>;
 

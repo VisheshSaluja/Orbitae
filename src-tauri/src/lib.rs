@@ -57,6 +57,11 @@ pub fn run() {
           std::sync::Arc::new(modules::router::classifier::SemanticRouter::new());
       app_handle.manage(router);
 
+      // Initialize Orchestrator (plan-first) session registry
+      let orchestrator_sessions: modules::orchestrator::commands::PlanSessionMap =
+          Arc::new(Mutex::new(HashMap::new()));
+      app_handle.manage(orchestrator_sessions);
+
       if let Err(e) = modules::mcp::service::McpService::ensure_token() {
           tracing::warn!("Failed to provision MCP auth token: {}", e);
       }
@@ -148,6 +153,16 @@ pub fn run() {
         modules::agent_sessions::commands::get_session_metrics,
         // Semantic Router
         modules::router::commands::route_request,
+        // Orchestrator (plan-first)
+        modules::orchestrator::commands::orchestrator_begin,
+        modules::orchestrator::commands::orchestrator_get,
+        modules::orchestrator::commands::orchestrator_edit_step,
+        modules::orchestrator::commands::orchestrator_ask,
+        modules::orchestrator::commands::orchestrator_revise,
+        modules::orchestrator::commands::orchestrator_approve_step,
+        modules::orchestrator::commands::orchestrator_approve_all,
+        modules::orchestrator::commands::orchestrator_confirm,
+        modules::orchestrator::commands::orchestrator_cancel,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

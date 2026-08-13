@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { TerminalGrid } from './TerminalGrid';
 import { SmartCommandStrip } from './SmartCommandStrip';
+import { PlanReviewPanel } from './PlanReviewPanel';
 import type { SessionMetrics } from '../../types';
 
 interface AgentSession {
@@ -81,6 +82,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const [taskMode, setTaskMode] = useState(false);
 
     const [view, setView] = useState<'dashboard' | 'grid'>('dashboard');
+    const [planTask, setPlanTask] = useState<string | null>(null);
     const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
     const [embeddedSessionIds] = useState<Set<string>>(() => new Set());
     const [taskSessionIds] = useState<Set<string>>(() => new Set());
@@ -234,42 +236,11 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
-    const handleSmartTask = useCallback(async (prompt: string) => {
-        try {
-            const sessionId = crypto.randomUUID();
-            await tm.create(sessionId, (status) => {
-                setSessions(prev => prev.map(s =>
-                    s.id === sessionId ? { ...s, status } : s
-                ));
-                if (status === 'stopped') {
-                    invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId })
-                        .then(m => {
-                            if (m) setSessionMetrics(prev => new Map(prev).set(sessionId, m));
-                        })
-                        .catch(() => {});
-                }
-            });
-            const session = await invokeCommand<AgentSession>('launch_embedded_session', {
-                agentType: 'claude',
-                projectId,
-                projectPath,
-                model: selectedModel || null,
-                instructions: prompt,
-                injectContext: true,
-                taskMode: true,
-                sessionId,
-                rows: null,
-                cols: null,
-            });
-            embeddedSessionIds.add(session.id);
-            taskSessionIds.add(session.id);
-            setSessions(prev => [...prev, session]);
-            setView('grid');
-            toast.success(`Routed to agent: ${prompt.substring(0, 50)}...`);
-        } catch (err) {
-            toast.error(`Failed to launch: ${err}`);
-        }
-    }, [projectId, projectPath, selectedModel, embeddedSessionIds, taskSessionIds]);
+    // Complex queries enter the plan-first loop: produce a plan the developer
+    // reviews and confirms before anything executes.
+    const handleSmartTask = useCallback((prompt: string) => {
+        setPlanTask(prompt);
+    }, []);
 
     const runningSessions = sessions.filter(s => s.status === 'running');
     const stoppedSessions = sessions.filter(s => s.status !== 'running');
@@ -288,6 +259,20 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const allEmbeddedIds = sessions
         .filter(s => embeddedSessionIds.has(s.id))
         .map(s => s.id);
+
+    if (planTask) {
+        return (
+            <div className="h-full">
+                <PlanReviewPanel
+                    projectId={projectId}
+                    projectPath={projectPath}
+                    task={planTask}
+                    model={selectedModel || null}
+                    onClose={() => setPlanTask(null)}
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="h-full flex">

@@ -1,0 +1,109 @@
+import { invokeCommand } from './tauri';
+
+export type SessionStatus =
+    | 'planning'
+    | 'reviewing'
+    | 'executing'
+    | 'done'
+    | 'errored'
+    | 'cancelled';
+
+export type PlanStatus = 'draft' | 'reviewing' | 'confirmed';
+
+export type StepStatus = 'pending' | 'approved' | 'done' | 'failed';
+
+export interface PlanStep {
+    id: string;
+    ordinal: number;
+    title: string;
+    detail_md: string;
+    model: string | null;
+    files: string[];
+    commands: string[];
+    status: StepStatus;
+    user_edited: boolean;
+}
+
+export interface Plan {
+    id: string;
+    session_id: string;
+    version: number;
+    goal: string;
+    summary_md: string;
+    status: PlanStatus;
+    steps: PlanStep[];
+    created_at: string;
+}
+
+export interface SessionView {
+    session_id: string;
+    status: SessionStatus;
+    task: string;
+    plan: Plan | null;
+}
+
+/** Start a plan-first session and produce the first plan for a task. */
+export function begin(
+    projectId: string,
+    projectPath: string,
+    task: string,
+    useGsd: boolean,
+    model?: string | null,
+): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_begin', {
+        projectId,
+        projectPath,
+        task,
+        useGsd,
+        model: model ?? null,
+    });
+}
+
+export function get(sessionId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_get', { sessionId });
+}
+
+export function editStep(
+    sessionId: string,
+    stepId: string,
+    changes: { title?: string; detailMd?: string },
+): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_edit_step', {
+        sessionId,
+        stepId,
+        title: changes.title ?? null,
+        detailMd: changes.detailMd ?? null,
+    });
+}
+
+export function ask(
+    sessionId: string,
+    question: string,
+    stepId?: string | null,
+): Promise<string> {
+    return invokeCommand<string>('orchestrator_ask', {
+        sessionId,
+        question,
+        stepId: stepId ?? null,
+    });
+}
+
+export function revise(sessionId: string, feedback: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_revise', { sessionId, feedback });
+}
+
+export function approveStep(sessionId: string, stepId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_approve_step', { sessionId, stepId });
+}
+
+export function approveAll(sessionId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_approve_all', { sessionId });
+}
+
+export function confirm(sessionId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_confirm', { sessionId });
+}
+
+export function cancel(sessionId: string): Promise<void> {
+    return invokeCommand<void>('orchestrator_cancel', { sessionId });
+}
