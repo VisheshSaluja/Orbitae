@@ -19,4 +19,5 @@ pub mod models;
 pub mod plan_ops;
 pub mod planner;
 pub mod session;
+pub mod skills;
 pub mod store;

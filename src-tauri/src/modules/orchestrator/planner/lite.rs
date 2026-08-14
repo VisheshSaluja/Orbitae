@@ -37,7 +37,7 @@ impl Planner for LitePlanner {
 }
 
 /// Parse the response; on failure, ask once for valid JSON and parse that.
-fn parse_or_repair(convo: &Conversation, text: &str) -> Result<PlanDraft> {
+pub(crate) fn parse_or_repair(convo: &Conversation, text: &str) -> Result<PlanDraft> {
     match parse_plan_response(text) {
         Ok(draft) => Ok(draft),
         Err(_) => {
@@ -48,7 +48,7 @@ fn parse_or_repair(convo: &Conversation, text: &str) -> Result<PlanDraft> {
 }
 
 /// The plan-schema instruction shared by the produce prompt and repairs.
-const SCHEMA_BLOCK: &str = r#"{
+pub(crate) const SCHEMA_BLOCK: &str = r#"{
   "goal": "one sentence describing the outcome",
   "summary_md": "a short markdown overview",
   "steps": [
@@ -79,7 +79,7 @@ fn build_plan_prompt(task: &str) -> String {
     )
 }
 
-fn build_revise_prompt(feedback: &str) -> String {
+pub(crate) fn build_revise_prompt(feedback: &str) -> String {
     format!(
         "Revise the plan based on this change request. Keep every step the user \
          did not ask to change exactly as-is.\n\n\

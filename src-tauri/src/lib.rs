@@ -154,6 +154,7 @@ pub fn run() {
         // Semantic Router
         modules::router::commands::route_request,
         // Orchestrator (plan-first)
+        modules::orchestrator::commands::orchestrator_list_skills,
         modules::orchestrator::commands::orchestrator_begin,
         modules::orchestrator::commands::orchestrator_get,
         modules::orchestrator::commands::orchestrator_edit_step,

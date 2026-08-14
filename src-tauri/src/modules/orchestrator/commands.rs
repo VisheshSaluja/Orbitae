@@ -132,16 +132,20 @@ pub async fn orchestrator_begin(
     let cwd = crate::shared::utils::expand_path(&project_path);
 
     tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
-        // GSD planner is Phase 6; until then all sessions use the lean planner.
-        let _ = use_gsd;
         let config = SessionConfig {
             cwd,
             model,
             permission_mode,
         };
+        // The GSD toggle selects the thorough vs lean planner.
+        let planner: Box<dyn super::planner::Planner> = if use_gsd {
+            Box::new(super::planner::gsd::GsdPlanner)
+        } else {
+            Box::new(LitePlanner)
+        };
         let session = PlanSession::begin(
             &ClaudeBackend,
-            Box::new(LitePlanner),
+            planner,
             Arc::new(NullStore),
             config,
             BeginParams {
@@ -197,6 +201,12 @@ pub async fn orchestrator_execute(
     })
     .await
     .map_err(|e| format!("task join: {e}"))?
+}
+
+/// List the installed skills the orchestrator can apply.
+#[command]
+pub async fn orchestrator_list_skills() -> Result<Vec<super::models::SkillDef>, String> {
+    Ok(super::skills::builtin_skills())
 }
 
 /// Get the current snapshot of a session.

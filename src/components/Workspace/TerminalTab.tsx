@@ -83,6 +83,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
 
     const [view, setView] = useState<'dashboard' | 'grid'>('dashboard');
     const [planTask, setPlanTask] = useState<string | null>(null);
+    const [planUseGsd, setPlanUseGsd] = useState(false);
     const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
     const [embeddedSessionIds] = useState<Set<string>>(() => new Set());
     const [taskSessionIds] = useState<Set<string>>(() => new Set());
@@ -238,7 +239,8 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
 
     // Complex queries enter the plan-first loop: produce a plan the developer
     // reviews and confirms before anything executes.
-    const handleSmartTask = useCallback((prompt: string) => {
+    const handleSmartTask = useCallback((prompt: string, useGsd: boolean) => {
+        setPlanUseGsd(useGsd);
         setPlanTask(prompt);
     }, []);
 
@@ -267,6 +269,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     projectId={projectId}
                     projectPath={projectPath}
                     task={planTask}
+                    useGsd={planUseGsd}
                     model={selectedModel || null}
                     onClose={() => setPlanTask(null)}
                 />

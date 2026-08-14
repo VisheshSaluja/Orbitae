@@ -45,7 +45,7 @@ type RouteResponse = DirectResponse | OrchestrateResponse | FallbackResponse;
 interface SmartCommandStripProps {
     projectId: string;
     projectPath: string;
-    onSpawnTask: (prompt: string) => void;
+    onSpawnTask: (prompt: string, useGsd: boolean) => void;
 }
 
 const ROUTE_ICONS: Record<string, React.ElementType> = {
@@ -71,6 +71,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<DirectResponse | null>(null);
     const [expanded, setExpanded] = useState(true);
+    const [useGsd, setUseGsd] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
     const project = useAppStore(s => s.projects.find(p => p.id === projectId));
@@ -126,13 +127,13 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                 case 'orchestrate':
                     setQuery('');
                     setResult(null);
-                    onSpawnTask(response.suggested_prompt);
+                    onSpawnTask(response.suggested_prompt, useGsd);
                     break;
 
                 case 'fallback':
                     setQuery('');
                     setResult(null);
-                    onSpawnTask(trimmed);
+                    onSpawnTask(trimmed, useGsd);
                     break;
             }
         } catch (err) {
@@ -141,7 +142,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
         } finally {
             setLoading(false);
         }
-    }, [query, loading, projectId, projectPath, onSpawnTask]);
+    }, [query, loading, projectId, projectPath, onSpawnTask, useGsd]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -170,6 +171,17 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                     className="flex-1 bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground/40 outline-none"
                     disabled={loading}
                 />
+                <button
+                    onClick={() => setUseGsd(v => !v)}
+                    title={useGsd
+                        ? 'GSD: thorough, codebase-grounded planning (get-shit-done methodology). Click for lean planning.'
+                        : 'Lean planning (fast). Click to enable GSD — thorough, codebase-grounded planning.'}
+                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium shrink-0 transition-colors ${
+                        useGsd ? 'text-violet-400 hover:bg-violet-500/10' : 'text-muted-foreground/50 hover:bg-foreground/6'
+                    }`}
+                >
+                    <Zap className="w-3 h-3" /> {useGsd ? 'GSD' : 'Lean'}
+                </button>
                 <button
                     onClick={togglePermissionMode}
                     title={permissionMode === 'skip'

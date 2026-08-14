@@ -7,6 +7,7 @@
 //! [`lite::LitePlanner`] is the lean, ponytail-style default; `GsdPlanner`
 //! (Phase 6) will implement the same trait by driving the GSD skill.
 
+pub mod gsd;
 pub mod lite;
 
 use serde::{Deserialize, Serialize};
