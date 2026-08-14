@@ -19,6 +19,14 @@ use super::models::{
 };
 use super::store::PlanStore;
 
+/// A fully-loaded plan session (session + latest plan + persisted execution).
+pub struct LoadedPlan {
+    pub session: OrchestrationSession,
+    pub plan: Option<Plan>,
+    pub result: Option<String>,
+    pub log: Option<String>,
+}
+
 /// A compact summary of a persisted plan session, for the Plans list.
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanSummary {
@@ -249,6 +257,32 @@ pub async fn list_plan_summaries(
         .collect())
 }
 
+/// Persist the execution log and result summary onto a session.
+pub async fn save_execution(
+    pool: &SqlitePool,
+    session_id: &str,
+    log: &str,
+    result: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET log = ?, result = ? WHERE id = ?")
+        .bind(log)
+        .bind(result)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
+/// Mark plans left `executing` as `errored` — their run died with the app.
+pub async fn reconcile_executing(pool: &SqlitePool) -> Result<u64> {
+    let r = sqlx::query("UPDATE orch_sessions SET status = 'errored' WHERE status = 'executing'")
+        .execute(pool)
+        .await
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(r.rows_affected())
+}
+
 /// Delete a session and all its plans, steps, and Q&A.
 pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<()> {
     let mut tx = pool
@@ -284,13 +318,10 @@ pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<()> {
     tx.commit().await.map_err(db)
 }
 
-/// Load a session and its latest plan version (with steps) from storage.
-pub async fn load_session(
-    pool: &SqlitePool,
-    session_id: &str,
-) -> Result<Option<(OrchestrationSession, Option<Plan>)>> {
+/// Load a session, its latest plan (with steps), and any persisted execution.
+pub async fn load_session(pool: &SqlitePool, session_id: &str) -> Result<Option<LoadedPlan>> {
     let srow = sqlx::query(
-        "SELECT id, project_id, task, backend, use_gsd, permission_mode, status, created_at, updated_at \
+        "SELECT id, project_id, task, backend, use_gsd, permission_mode, status, created_at, updated_at, result, log \
          FROM orch_sessions WHERE id = ?",
     )
     .bind(session_id)
@@ -302,6 +333,9 @@ pub async fn load_session(
         Some(r) => r,
         None => return Ok(None),
     };
+
+    let result: Option<String> = srow.get("result");
+    let log: Option<String> = srow.get("log");
 
     let session = OrchestrationSession {
         id: srow.get::<String, _>("id"),
@@ -367,5 +401,10 @@ pub async fn load_session(
         }
     };
 
-    Ok(Some((session, plan)))
+    Ok(Some(LoadedPlan {
+        session,
+        plan,
+        result,
+        log,
+    }))
 }

@@ -40,6 +40,10 @@ export interface SessionView {
     status: SessionStatus;
     task: string;
     plan: Plan | null;
+    /** Persisted execution result summary (when reopening a finished plan). */
+    result?: string | null;
+    /** Persisted execution log (when reopening a finished plan). */
+    log?: string | null;
 }
 
 export interface PlanSummary {

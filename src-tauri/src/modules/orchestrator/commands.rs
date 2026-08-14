@@ -18,7 +18,7 @@ use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::sqlite_store::{
-    delete_session, list_plan_summaries, load_session, PlanSummary, SqliteStore,
+    delete_session, list_plan_summaries, load_session, save_execution, PlanSummary, SqliteStore,
 };
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
@@ -67,6 +67,10 @@ pub struct SessionView {
     pub status: SessionStatus,
     pub task: String,
     pub plan: Option<Plan>,
+    /// Persisted execution result summary (present when reopening a finished plan).
+    pub result: Option<String>,
+    /// Persisted execution log (present when reopening a finished plan).
+    pub log: Option<String>,
 }
 
 impl SessionView {
@@ -76,15 +80,19 @@ impl SessionView {
             status: s.session().status,
             task: s.session().task.clone(),
             plan: s.plan().cloned(),
+            result: None,
+            log: None,
         }
     }
 
-    fn from_parts(session: &super::models::OrchestrationSession, plan: Option<Plan>) -> Self {
+    fn from_loaded(loaded: super::sqlite_store::LoadedPlan) -> Self {
         SessionView {
-            session_id: session.id.clone(),
-            status: session.status,
-            task: session.task.clone(),
-            plan,
+            session_id: loaded.session.id.clone(),
+            status: loaded.session.status,
+            task: loaded.session.task.clone(),
+            plan: loaded.plan,
+            result: loaded.result,
+            log: loaded.log,
         }
     }
 }
@@ -198,6 +206,7 @@ pub async fn orchestrator_begin(
 #[command]
 pub async fn orchestrator_execute(
     map: State<'_, PlanSessionMap>,
+    pool: State<'_, SqlitePool>,
     app_handle: AppHandle,
     session_id: String,
 ) -> Result<SessionView, String> {
@@ -228,14 +237,22 @@ pub async fn orchestrator_execute(
 
     // 2. Run the long execution WITHOUT holding the session lock, so reads
     //    (reopening the plan, polling) never block while it runs for minutes.
+    //    Accumulate the log alongside streaming it, so a finished plan can be
+    //    reopened and still show what happened.
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
     let handle = app_handle.clone();
     let pc = progress_channel.clone();
+    let log_acc = log.clone();
     let outcomes = tokio::task::spawn_blocking(move || -> Result<_, String> {
         super::executor::run_tiered(&ClaudeBackend, &config, &plan, |ev, step| {
             let line = format_exec_event(ev);
             if !line.is_empty() {
                 let model = step.model.as_deref().unwrap_or("sonnet");
-                let _ = handle.emit(&pc, format!("[{}·{}] {}", step.ordinal + 1, model, line));
+                let tagged = format!("[{}·{}] {}", step.ordinal + 1, model, line);
+                if let Ok(mut l) = log_acc.lock() {
+                    l.push(tagged.clone());
+                }
+                let _ = handle.emit(&pc, tagged);
             }
         })
         .map_err(|e| e.to_string())
@@ -252,6 +269,10 @@ pub async fn orchestrator_execute(
     })
     .await
     .map_err(|e| format!("task join: {e}"))??;
+
+    // 4. Persist the log + result so reopening a finished plan shows the outcome.
+    let log_text = log.lock().map(|l| l.join("\n")).unwrap_or_default();
+    let _ = save_execution(pool.inner(), &session_id, &log_text, &summary).await;
 
     let _ = app_handle.emit(&result_channel, summary);
     Ok(view)
@@ -332,7 +353,7 @@ pub async fn orchestrator_load_plan(
         .await
         .map_err(|e| e.to_string())?
     {
-        Some((session, plan)) => Ok(SessionView::from_parts(&session, plan)),
+        Some(loaded) => Ok(SessionView::from_loaded(loaded)),
         None => Err(format!("plan not found: {session_id}")),
     }
 }

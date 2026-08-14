@@ -89,6 +89,14 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         return () => { cancelled = true; };
     }, [projectId, projectPath, task, useGsd, model, reopenId]);
 
+    // Reopening a finished plan: show its persisted log + result.
+    useEffect(() => {
+        if (!reopenId || !session) return;
+        if (session.log) setExecLog(session.log.split('\n'));
+        if (session.result) setExecResult(session.result);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reopenId, session?.session_id]);
+
     // If we reopened a plan that's still executing, attach to its live progress.
     useEffect(() => {
         const sid = session?.session_id;

@@ -57,6 +57,11 @@ pub fn run() {
               Ok(_) => {}
               Err(e) => tracing::warn!("failed to reconcile stale sessions: {}", e),
           }
+          // Likewise: a plan left "executing" died with the app — mark it errored
+          // so reopening it doesn't spin forever waiting on a dead stream.
+          if let Err(e) = modules::orchestrator::sqlite_store::reconcile_executing(&pool).await {
+              tracing::warn!("failed to reconcile executing plans: {}", e);
+          }
 
           app_handle.manage(pool);
       });
