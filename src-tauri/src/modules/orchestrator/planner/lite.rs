@@ -102,7 +102,7 @@ fn parse_plan_response(text: &str) -> Result<PlanDraft> {
 
 /// Find the plan JSON in free text: prefer a fenced block, else the first
 /// balanced `{...}` object (brace-counting that respects string literals).
-fn extract_json_object(text: &str) -> Option<String> {
+pub(crate) fn extract_json_object(text: &str) -> Option<String> {
     // Prefer a ```json ... ``` (or plain ``` ... ```) fence containing an object.
     if let Some(fenced) = extract_fenced(text) {
         if let Some(obj) = first_balanced_object(&fenced) {

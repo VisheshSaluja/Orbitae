@@ -6,9 +6,10 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
+    ShieldCheck, AlertTriangle, XCircle,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
-import type { SessionView, Plan, PlanStep } from '../../lib/orchestrator';
+import type { SessionView, Plan, PlanStep, ValidationReport, RiskLevel } from '../../lib/orchestrator';
 
 interface PlanReviewPanelProps {
     projectId: string;
@@ -72,6 +73,10 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const [execLog, setExecLog] = useState<string[]>([]);
     const [execResult, setExecResult] = useState<string | null>(null);
     const [executing, setExecuting] = useState(false);
+
+    // Validation (Review & Ship)
+    const [validating, setValidating] = useState(false);
+    const [report, setReport] = useState<ValidationReport | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
@@ -201,6 +206,19 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         }
     };
 
+    const runValidation = async () => {
+        if (!sessionId) return;
+        setValidating(true);
+        setReport(null);
+        try {
+            setReport(await orch.validate(projectId, projectPath, sessionId));
+        } catch (e) {
+            toast.error(`Validation failed: ${e}`);
+        } finally {
+            setValidating(false);
+        }
+    };
+
     // Close keeps the plan — it's persisted and reopenable from the Plans list.
     const doClose = () => onClose();
 
@@ -282,6 +300,23 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                             <Markdown>{execResult}</Markdown>
                         </div>
                     </div>
+                )}
+
+                {/* Review & Ship — validation */}
+                {session?.status === 'done' && (
+                    report ? (
+                        <ValidationView report={report} onRerun={runValidation} busy={validating} />
+                    ) : (
+                        <button
+                            onClick={runValidation}
+                            disabled={validating}
+                            className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-[13px] font-medium hover:border-foreground/20 transition-colors disabled:opacity-50"
+                        >
+                            {validating
+                                ? <><Loader2 className="w-4 h-4 animate-spin" /> Reviewing the change…</>
+                                : <><ShieldCheck className="w-4 h-4 text-emerald-400" /> Review &amp; Ship</>}
+                        </button>
+                    )
                 )}
 
                 {plan.summary_md.trim() && (
@@ -395,6 +430,79 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                         {plan.status === 'confirmed' ? 'Confirmed' : 'Confirm & Execute'}
                     </button>
                 </div>
+            </div>
+        </div>
+    );
+};
+
+const RISK_STYLES: Record<RiskLevel, { label: string; cls: string }> = {
+    low: { label: 'Low risk — safe to merge', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+    medium: { label: 'Medium risk — worth a look', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+    high: { label: 'High risk — review the diff', cls: 'bg-red-500/10 text-red-400 border-red-500/30' },
+};
+
+const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; busy: boolean }> = ({ report, onRerun, busy }) => {
+    const escalations = report.findings.filter((f) => f.action === 'escalate');
+    const autofixes = report.findings.filter((f) => f.action === 'auto_fix');
+    const risk = RISK_STYLES[report.risk_level];
+    return (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[12px] font-semibold text-foreground">Review</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${risk.cls}`}>
+                    {risk.label} · {report.risk_score}
+                </span>
+                <div className="flex-1" />
+                <button onClick={onRerun} disabled={busy} className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-foreground/6 disabled:opacity-40" title="Re-run review">
+                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                </button>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+                {/* Deterministic checks */}
+                <div className="space-y-1">
+                    {report.checks.map((c) => (
+                        <div key={c.name} className="flex items-start gap-2 text-[12px]">
+                            {c.passed
+                                ? <Check className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                                : <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />}
+                            <span className="font-medium text-foreground/90 w-20 shrink-0">{c.name}</span>
+                            <span className={c.passed ? 'text-emerald-400/70' : 'text-red-400/80 font-mono text-[11px] whitespace-pre-wrap break-words'}>
+                                {c.passed ? 'passed' : (c.output || 'failed')}
+                            </span>
+                        </div>
+                    ))}
+                    {report.checks.length === 0 && (
+                        <span className="text-[11px] text-muted-foreground/50">No deterministic checks detected for this project.</span>
+                    )}
+                </div>
+
+                {/* Escalations — the judgment calls you review */}
+                {escalations.length > 0 && (
+                    <div className="space-y-1.5">
+                        <span className="text-[11px] font-medium text-amber-400/80">{escalations.length} to review</span>
+                        {escalations.map((f, i) => (
+                            <div key={i} className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5">
+                                <div className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+                                    <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" /> {f.title}
+                                </div>
+                                <div className="text-[11px] text-muted-foreground mt-1">{f.detail}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {autofixes.length > 0 && (
+                    <div className="text-[11px] text-muted-foreground/60">
+                        {autofixes.length} mechanical finding{autofixes.length !== 1 ? 's' : ''} (auto-fixable)
+                    </div>
+                )}
+
+                {escalations.length === 0 && report.checks.every((c) => c.passed) && (
+                    <div className="text-[12px] text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Nothing flagged — clean.
+                    </div>
+                )}
             </div>
         </div>
     );

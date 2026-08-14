@@ -284,6 +284,53 @@ pub async fn orchestrator_list_skills() -> Result<Vec<super::models::SkillDef>, 
     Ok(super::skills::builtin_skills())
 }
 
+/// Run the bounded validation pass (deterministic checks + gated adversarial
+/// review) on a plan's changes, honoring the project's configured caps.
+#[command]
+pub async fn orchestrator_validate(
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+    project_path: String,
+    session_id: String,
+) -> Result<super::validation::ValidationReport, String> {
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+
+    // Load the user's configured caps for this project.
+    let settings_json = crate::modules::projects::repository::ProjectRepository::new(pool.inner().clone())
+        .get_project(&project_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|p| p.settings);
+    let settings = super::settings::OrchestrationSettings::from_project_settings(settings_json.as_deref());
+    if settings.validation == super::settings::ValidationMode::Off {
+        return Err("validation is turned off for this project".into());
+    }
+
+    // The intent is the plan's goal.
+    let intent = super::sqlite_store::load_session(pool.inner(), &session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|l| l.plan.map(|p| p.goal))
+        .unwrap_or_else(|| "the recent change".to_string());
+
+    let cwd = crate::shared::utils::expand_path(&project_path);
+    tokio::task::spawn_blocking(move || -> Result<super::validation::ValidationReport, String> {
+        let config = SessionConfig {
+            cwd: cwd.clone(),
+            model: Some("sonnet".to_string()),
+            permission_mode: TaskPermissionMode::AcceptEdits,
+        };
+        super::validation::run_validation(&ClaudeBackend, &config, &cwd, &intent, &settings)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
 /// List recent persisted plan sessions for a project (for the Plans list).
 #[command]
 pub async fn orchestrator_list_plans(

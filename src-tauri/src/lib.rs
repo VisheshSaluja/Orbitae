@@ -169,6 +169,7 @@ pub fn run() {
         modules::router::commands::route_request,
         // Orchestrator (plan-first)
         modules::orchestrator::commands::orchestrator_list_skills,
+        modules::orchestrator::commands::orchestrator_validate,
         modules::orchestrator::commands::orchestrator_list_plans,
         modules::orchestrator::commands::orchestrator_load_plan,
         modules::orchestrator::commands::orchestrator_delete_plan,

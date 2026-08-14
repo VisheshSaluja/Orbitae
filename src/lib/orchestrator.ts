@@ -71,6 +71,41 @@ export function deletePlan(sessionId: string): Promise<void> {
     return invokeCommand<void>('orchestrator_delete_plan', { sessionId });
 }
 
+export type RiskLevel = 'low' | 'medium' | 'high';
+
+export interface Check {
+    name: string;
+    passed: boolean;
+    output: string;
+}
+
+export interface Finding {
+    title: string;
+    detail: string;
+    action: 'auto_fix' | 'escalate';
+}
+
+export interface ValidationReport {
+    checks: Check[];
+    findings: Finding[];
+    risk_level: RiskLevel;
+    risk_score: number;
+    summary: string;
+}
+
+/** Run the bounded validation pass (checks + gated adversarial review). */
+export function validate(
+    projectId: string,
+    projectPath: string,
+    sessionId: string,
+): Promise<ValidationReport> {
+    return invokeCommand<ValidationReport>('orchestrator_validate', {
+        projectId,
+        projectPath,
+        sessionId,
+    });
+}
+
 /** Start a plan-first session and produce the first plan for a task. */
 export function begin(
     projectId: string,
