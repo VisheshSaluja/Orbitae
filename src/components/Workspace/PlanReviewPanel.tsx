@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
+import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
-    RotateCcw, X, Play, Lock, Send, ChevronRight,
+    RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
 import type { SessionView, Plan, PlanStep } from '../../lib/orchestrator';
@@ -63,6 +64,12 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const [askInput, setAskInput] = useState('');
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [feedback, setFeedback] = useState('');
+
+    // Execution
+    const [execLog, setExecLog] = useState<string[]>([]);
+    const [executing, setExecuting] = useState(false);
+    const logEndRef = useRef<HTMLDivElement>(null);
+    useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
     // Begin the session on mount.
     useEffect(() => {
@@ -123,14 +130,32 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         setFeedback('');
     };
 
+    const runExecution = useCallback(async (sid: string) => {
+        setExecuting(true);
+        setExecLog([]);
+        const unlisten = await listen<string>(`orchestrator-progress-${sid}`, (e) => {
+            setExecLog((prev) => [...prev, e.payload]);
+        });
+        try {
+            const v = await orch.execute(sid);
+            setSession(v);
+            toast.success('Execution complete');
+            onConfirmed?.(v);
+        } catch (e) {
+            toast.error(`Execution failed: ${e}`);
+        } finally {
+            unlisten();
+            setExecuting(false);
+        }
+    }, [onConfirmed]);
+
     const doConfirm = async () => {
         if (!sessionId) return;
         setBusy('Confirm');
         try {
             const v = await orch.confirm(sessionId);
             setSession(v);
-            onConfirmed?.(v);
-            toast.success('Plan confirmed — ready to execute');
+            void runExecution(sessionId);
         } catch (e) {
             toast.error(`Confirm failed: ${e}`);
         } finally {
@@ -187,6 +212,26 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
             {/* Scrollable body */}
             <div className="flex-1 overflow-y-auto hide-scrollbar px-4 sm:px-6 py-4 space-y-4">
+                {(executing || execLog.length > 0) && (
+                    <div className="rounded-xl border border-border bg-[#0a0a0a] overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50">
+                            {executing
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                                : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                            <Terminal className="w-3.5 h-3.5 text-muted-foreground/60" />
+                            <span className="text-[12px] font-medium text-foreground">
+                                {executing ? 'Executing plan…' : 'Execution complete'}
+                            </span>
+                        </div>
+                        <div className="px-4 py-3 max-h-72 overflow-y-auto">
+                            <pre className="text-[11px] leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap break-words">
+                                {execLog.join('\n')}
+                            </pre>
+                            <div ref={logEndRef} />
+                        </div>
+                    </div>
+                )}
+
                 {plan.summary_md.trim() && (
                     <div className="rounded-xl border border-border/50 bg-card/50 p-4">
                         <Markdown>{plan.summary_md}</Markdown>

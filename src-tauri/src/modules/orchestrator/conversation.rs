@@ -53,30 +53,55 @@ impl Conversation {
 
     /// Like [`ask`], with an explicit idle timeout.
     pub fn ask_with_timeout(&self, prompt: &str, timeout: Duration) -> Result<TurnOutput> {
+        self.ask_streaming_with_timeout(prompt, timeout, |_| {})
+    }
+
+    /// Send a user turn, invoking `on_event` for each event as it streams in,
+    /// and block until the turn completes. Used for execution, where the
+    /// developer watches progress live rather than waiting for the final text.
+    pub fn ask_streaming<F: FnMut(&BackendEvent)>(
+        &self,
+        prompt: &str,
+        on_event: F,
+    ) -> Result<TurnOutput> {
+        self.ask_streaming_with_timeout(prompt, DEFAULT_TURN_TIMEOUT, on_event)
+    }
+
+    fn ask_streaming_with_timeout<F: FnMut(&BackendEvent)>(
+        &self,
+        prompt: &str,
+        timeout: Duration,
+        mut on_event: F,
+    ) -> Result<TurnOutput> {
         self.session.send(prompt)?;
         let mut text = String::new();
         let mut stderr = String::new();
         loop {
             match self.rx.recv_timeout(timeout) {
-                Ok(BackendEvent::AssistantText(t)) => text.push_str(&t),
-                Ok(BackendEvent::Completed { is_error, .. }) => {
-                    return Ok(TurnOutput { text, is_error, stderr });
+                Ok(ev) => {
+                    on_event(&ev);
+                    match ev {
+                        BackendEvent::AssistantText(t) => text.push_str(&t),
+                        BackendEvent::Completed { is_error, .. } => {
+                            return Ok(TurnOutput { text, is_error, stderr });
+                        }
+                        BackendEvent::Stderr(s) => {
+                            stderr.push_str(&s);
+                            stderr.push('\n');
+                        }
+                        BackendEvent::Exited(_) => {
+                            let detail = if stderr.trim().is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", stderr.trim())
+                            };
+                            return Err(OrchestratorError::Backend(format!(
+                                "session exited before completing the turn{detail}"
+                            )));
+                        }
+                        _ => {}
+                    }
                 }
-                Ok(BackendEvent::Stderr(s)) => {
-                    stderr.push_str(&s);
-                    stderr.push('\n');
-                }
-                Ok(BackendEvent::Exited(_)) => {
-                    let detail = if stderr.trim().is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", stderr.trim())
-                    };
-                    return Err(OrchestratorError::Backend(format!(
-                        "session exited before completing the turn{detail}"
-                    )));
-                }
-                Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => {
                     return Err(OrchestratorError::Backend("turn timed out".into()));
                 }

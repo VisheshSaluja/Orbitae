@@ -8,17 +8,52 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tauri::{command, State};
+use sqlx::SqlitePool;
+use tauri::{command, AppHandle, Emitter, State};
 
-use super::backend::{claude::ClaudeBackend, SessionConfig};
+use super::backend::{claude::ClaudeBackend, BackendEvent, SessionConfig};
 use super::error::OrchestratorError;
 use super::models::{Plan, SessionStatus};
 use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::store::NullStore;
+use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
 use crate::shared::validation;
+
+/// String label persisted for a permission mode.
+fn permission_label(mode: TaskPermissionMode) -> &'static str {
+    match mode {
+        TaskPermissionMode::AcceptEdits => "acceptEdits",
+        TaskPermissionMode::Skip => "skip",
+    }
+}
+
+/// Format a streamed execution event into a terminal-friendly line.
+fn format_exec_event(ev: &BackendEvent) -> String {
+    match ev {
+        BackendEvent::SessionStarted { model } => format!("▸ executing (model: {model})"),
+        BackendEvent::AssistantText(t) => t.clone(),
+        BackendEvent::ToolUse { name, detail } => {
+            if detail.is_empty() {
+                format!("▸ {name}")
+            } else {
+                format!("▸ {name}  {detail}")
+            }
+        }
+        BackendEvent::Completed { is_error, cost_usd, duration_ms, .. } => {
+            let label = if *is_error { "failed" } else { "done" };
+            format!(
+                "━━ {label} · {:.1}s · ${:.4}",
+                *duration_ms as f64 / 1000.0,
+                cost_usd
+            )
+        }
+        BackendEvent::Stderr(s) => format!("[stderr] {s}"),
+        BackendEvent::Exited(_) => String::new(),
+    }
+}
 
 /// In-memory registry of live orchestration sessions, each independently locked.
 pub type PlanSessionMap = Arc<Mutex<HashMap<String, Arc<Mutex<PlanSession>>>>>;
@@ -71,6 +106,7 @@ where
 #[command]
 pub async fn orchestrator_begin(
     map: State<'_, PlanSessionMap>,
+    pool: State<'_, SqlitePool>,
     project_id: String,
     project_path: String,
     task: String,
@@ -89,6 +125,9 @@ pub async fn orchestrator_begin(
         }
     }
 
+    // Execution honors the project's Safe/Full permission toggle.
+    let permission_mode = resolve_task_permission_mode(pool.inner(), &project_id).await;
+
     let map = map.inner().clone();
     let cwd = crate::shared::utils::expand_path(&project_path);
 
@@ -98,7 +137,7 @@ pub async fn orchestrator_begin(
         let config = SessionConfig {
             cwd,
             model,
-            permission_mode: TaskPermissionMode::AcceptEdits,
+            permission_mode,
         };
         let session = PlanSession::begin(
             &ClaudeBackend,
@@ -109,7 +148,7 @@ pub async fn orchestrator_begin(
                 project_id,
                 task,
                 use_gsd,
-                permission_mode: "acceptEdits".into(),
+                permission_mode: permission_label(permission_mode).into(),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -120,6 +159,41 @@ pub async fn orchestrator_begin(
             .map_err(|e| format!("registry lock: {e}"))?
             .insert(id, Arc::new(Mutex::new(session)));
         Ok(view)
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
+/// Execute the confirmed plan, streaming progress lines to the frontend via
+/// `orchestrator-progress-{session_id}` events. Returns the final session view.
+#[command]
+pub async fn orchestrator_execute(
+    map: State<'_, PlanSessionMap>,
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<SessionView, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
+    let session = {
+        let guard = map
+            .inner()
+            .lock()
+            .map_err(|e| format!("registry lock: {e}"))?;
+        guard.get(&session_id).cloned()
+    }
+    .ok_or_else(|| format!("session not found: {session_id}"))?;
+
+    let channel = format!("orchestrator-progress-{session_id}");
+    tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
+        let mut s = session.lock().map_err(|e| format!("session lock: {e}"))?;
+        s.execute(|ev| {
+            let line = format_exec_event(ev);
+            if !line.is_empty() {
+                let _ = app_handle.emit(&channel, line);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+        Ok(SessionView::of(&s))
     })
     .await
     .map_err(|e| format!("task join: {e}"))?

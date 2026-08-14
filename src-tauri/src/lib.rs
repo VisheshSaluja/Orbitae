@@ -162,6 +162,7 @@ pub fn run() {
         modules::orchestrator::commands::orchestrator_approve_step,
         modules::orchestrator::commands::orchestrator_approve_all,
         modules::orchestrator::commands::orchestrator_confirm,
+        modules::orchestrator::commands::orchestrator_execute,
         modules::orchestrator::commands::orchestrator_cancel,
     ])
     .run(tauri::generate_context!())

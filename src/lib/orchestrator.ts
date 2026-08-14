@@ -104,6 +104,11 @@ export function confirm(sessionId: string): Promise<SessionView> {
     return invokeCommand<SessionView>('orchestrator_confirm', { sessionId });
 }
 
+/** Execute the confirmed plan. Progress streams via `orchestrator-progress-{id}` events. */
+export function execute(sessionId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_execute', { sessionId });
+}
+
 export function cancel(sessionId: string): Promise<void> {
     return invokeCommand<void>('orchestrator_cancel', { sessionId });
 }

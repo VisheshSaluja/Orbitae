@@ -602,7 +602,7 @@ pub async fn get_session_metrics(
 ///
 /// Reads the `autonomous_permission_mode` key from the project's settings JSON,
 /// defaulting to the safe `AcceptEdits` mode if unset, unparseable, or unknown.
-async fn resolve_task_permission_mode(
+pub(crate) async fn resolve_task_permission_mode(
     pool: &SqlitePool,
     project_id: &str,
 ) -> super::events::TaskPermissionMode {

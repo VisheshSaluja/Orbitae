@@ -19,6 +19,13 @@ use super::models::{
 use super::plan_ops::{apply_step_edit, can_confirm, draft_to_plan, merge_revision, StepEdit};
 use super::planner::Planner;
 
+/// Instruction that flips the session from planning to implementation. The plan
+/// is already in the session's context (same conversation), so this stays lean.
+const EXECUTION_PROMPT: &str = "The plan above is approved. Implement it now, \
+     working through the steps in order. Be lean — make the minimal changes that \
+     fully accomplish each step, and actually apply the edits and run the necessary \
+     commands. When finished, give a brief summary of what changed.";
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -203,6 +210,45 @@ impl PlanSession {
             .update_session_status(&self.session.id, SessionStatus::Executing)
     }
 
+    /// Execute the confirmed plan through the live session, streaming each event
+    /// to `on_event`. On success every step is marked done and the session
+    /// completes; on failure the session is marked errored.
+    ///
+    /// Requires the session to be in `Executing` (i.e. [`confirm`] already ran).
+    /// ponytail: holds the session for the whole run — cancel-during-execution is
+    /// a follow-up; today the run completes or the session is closed.
+    pub fn execute<F: FnMut(&super::backend::BackendEvent)>(
+        &mut self,
+        on_event: F,
+    ) -> Result<()> {
+        if self.session.status != SessionStatus::Executing {
+            return Err(OrchestratorError::Validation(
+                "plan must be confirmed before executing".into(),
+            ));
+        }
+
+        let out = self.convo.ask_streaming(EXECUTION_PROMPT, on_event)?;
+
+        if out.is_error {
+            self.session.status = SessionStatus::Errored;
+            self.store
+                .update_session_status(&self.session.id, SessionStatus::Errored)?;
+            return Err(OrchestratorError::Backend(format!(
+                "execution failed: {}",
+                out.stderr.trim()
+            )));
+        }
+
+        if let Some(plan) = self.plan.as_mut() {
+            for step in &mut plan.steps {
+                step.status = StepStatus::Done;
+            }
+        }
+        self.session.status = SessionStatus::Done;
+        self.store
+            .update_session_status(&self.session.id, SessionStatus::Done)
+    }
+
     /// Cancel the session and stop the underlying agent.
     pub fn cancel(&mut self) -> Result<()> {
         let _ = self.convo.stop();
@@ -322,6 +368,38 @@ mod tests {
         assert!(keep.user_edited);
         assert!(plan.steps.iter().any(|s| s.title == "New"));
         assert_eq!(store.plan_count(), 2);
+    }
+
+    #[test]
+    fn execute_marks_done_and_streams_events() {
+        let store = Arc::new(InMemoryStore::default());
+        let mut s = begin_session(
+            store.clone(),
+            vec![
+                vec![BackendEvent::AssistantText(plan_json("Goal", &["A", "B"])), completed()],
+                vec![BackendEvent::AssistantText("Implementing…".into()), completed()],
+            ],
+        );
+        s.approve_all().unwrap();
+        s.confirm().unwrap();
+
+        let mut count = 0;
+        s.execute(|_| count += 1).unwrap();
+
+        assert_eq!(s.session().status, SessionStatus::Done);
+        assert!(s.plan().unwrap().steps.iter().all(|st| st.status == StepStatus::Done));
+        assert!(count > 0, "execution should stream events");
+    }
+
+    #[test]
+    fn execute_requires_confirmation() {
+        let store = Arc::new(InMemoryStore::default());
+        let mut s = begin_session(
+            store,
+            vec![vec![BackendEvent::AssistantText(plan_json("Goal", &["A"])), completed()]],
+        );
+        // Still in Reviewing — execute must refuse.
+        assert!(s.execute(|_| {}).is_err());
     }
 
     #[test]
