@@ -56,6 +56,32 @@ pub async fn build_project_context(
         ));
     }
 
+    // Knowledge graph nodes (conventions, architecture, decisions the team recorded).
+    // This is the context moat: the agent reads what the project already knows
+    // instead of rediscovering it.
+    let nodes = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT title, kind, content FROM knowledge_nodes \
+         WHERE project_id = ? AND status = 'active' \
+         ORDER BY updated_at DESC LIMIT 30",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    if !nodes.is_empty() {
+        let items: Vec<String> = nodes
+            .iter()
+            .map(|(title, kind, content)| {
+                let preview: String = content.chars().take(240).collect();
+                format!("### [{kind}] {title}\n{preview}")
+            })
+            .collect();
+        sections.push(format!(
+            "## Project Knowledge (recorded in the knowledge graph)\n{}\n",
+            items.join("\n\n")
+        ));
+    }
+
     // Runbook names
     let playbooks = repo.get_project_playbooks(project_id).await.unwrap_or_default();
     if !playbooks.is_empty() {

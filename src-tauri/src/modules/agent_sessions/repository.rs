@@ -90,6 +90,18 @@ impl AgentSessionRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
+    /// Mark all sessions still recorded as "running" as stopped.
+    ///
+    /// Called once at startup: a session's process can't survive an app restart,
+    /// so any leftover "running" row is stale and must be reconciled — otherwise
+    /// the UI shows dead sessions as alive.
+    pub async fn reconcile_stale(&self) -> Result<u64> {
+        let result =
+            sqlx::query("UPDATE agent_sessions SET status = 'stopped' WHERE status = 'running'")
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected())
+    }
 }
 
 #[derive(sqlx::FromRow)]

@@ -49,6 +49,15 @@ pub fn run() {
               .await
               .expect("failed to run migrations");
 
+          // Reconcile stale sessions: any "running" row from a previous app run
+          // is dead (its process didn't survive the restart).
+          let repo = modules::agent_sessions::repository::AgentSessionRepository::new(pool.clone());
+          match repo.reconcile_stale().await {
+              Ok(n) if n > 0 => tracing::info!("reconciled {} stale agent session(s) to stopped", n),
+              Ok(_) => {}
+              Err(e) => tracing::warn!("failed to reconcile stale sessions: {}", e),
+          }
+
           app_handle.manage(pool);
       });
 
@@ -155,6 +164,9 @@ pub fn run() {
         modules::router::commands::route_request,
         // Orchestrator (plan-first)
         modules::orchestrator::commands::orchestrator_list_skills,
+        modules::orchestrator::commands::orchestrator_list_plans,
+        modules::orchestrator::commands::orchestrator_load_plan,
+        modules::orchestrator::commands::orchestrator_delete_plan,
         modules::orchestrator::commands::orchestrator_begin,
         modules::orchestrator::commands::orchestrator_get,
         modules::orchestrator::commands::orchestrator_edit_step,

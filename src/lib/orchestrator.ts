@@ -42,6 +42,31 @@ export interface SessionView {
     plan: Plan | null;
 }
 
+export interface PlanSummary {
+    session_id: string;
+    task: string;
+    goal: string | null;
+    status: SessionStatus;
+    version: number | null;
+    step_count: number;
+    updated_at: string;
+}
+
+/** Recent persisted plan sessions for a project. */
+export function listPlans(projectId: string): Promise<PlanSummary[]> {
+    return invokeCommand<PlanSummary[]>('orchestrator_list_plans', { projectId });
+}
+
+/** Reopen a plan — live session if active, else its persisted state. */
+export function loadPlan(sessionId: string): Promise<SessionView> {
+    return invokeCommand<SessionView>('orchestrator_load_plan', { sessionId });
+}
+
+/** Delete a plan session from the registry and storage. */
+export function deletePlan(sessionId: string): Promise<void> {
+    return invokeCommand<void>('orchestrator_delete_plan', { sessionId });
+}
+
 /** Start a plan-first session and produce the first plan for a task. */
 export function begin(
     projectId: string,

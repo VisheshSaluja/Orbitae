@@ -326,10 +326,9 @@ fn define_routes() -> Vec<Route> {
                 "folder layout",
             ],
             template_prompt: Some(
-                "Search the knowledge graph for architecture and convention nodes. \
-                 Based on the project scripts and any existing documentation, give me \
-                 a concise overview of this codebase: what tech stack it uses, how it's \
-                 structured, and how to get started."
+                "Using the project context provided plus the actual scripts and docs, \
+                 give me a concise overview of this codebase: what tech stack it uses, \
+                 how it's structured, and how to get started."
             ),
         },
         Route {
@@ -348,8 +347,8 @@ fn define_routes() -> Vec<Route> {
             ],
             template_prompt: Some(
                 "Give me a full status check of this project. Check git status, \
-                 list all active processes, and search the knowledge graph for any \
-                 recent issues or notes. Summarize the current state."
+                 list all active processes, and review the project context and notes \
+                 for any recent issues. Summarize the current state."
             ),
         },
         Route {
@@ -388,9 +387,9 @@ fn define_routes() -> Vec<Route> {
             ],
             template_prompt: Some(
                 "I want to document a development convention for this project. \
-                 Ask me what the convention is, then save it as a knowledge node \
-                 with kind 'convention' so the team's AI agents can reference it \
-                 in future conversations."
+                 Ask me what the convention is, then record it in the project's \
+                 conventions documentation (CLAUDE.md or a file under docs/) so the \
+                 team and future agents can reference it."
             ),
         },
     ]

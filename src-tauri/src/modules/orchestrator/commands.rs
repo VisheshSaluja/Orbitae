@@ -17,7 +17,9 @@ use super::models::{Plan, SessionStatus};
 use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
-use super::store::NullStore;
+use super::sqlite_store::{
+    delete_session, list_plan_summaries, load_session, PlanSummary, SqliteStore,
+};
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
 use crate::shared::validation;
@@ -76,6 +78,15 @@ impl SessionView {
             plan: s.plan().cloned(),
         }
     }
+
+    fn from_parts(session: &super::models::OrchestrationSession, plan: Option<Plan>) -> Self {
+        SessionView {
+            session_id: session.id.clone(),
+            status: session.status,
+            task: session.task.clone(),
+            plan,
+        }
+    }
 }
 
 /// Look up a session and run a blocking operation on it off the async runtime.
@@ -128,8 +139,21 @@ pub async fn orchestrator_begin(
     // Execution honors the project's Safe/Full permission toggle.
     let permission_mode = resolve_task_permission_mode(pool.inner(), &project_id).await;
 
+    // The context moat: hand the agent what the project already knows (codebase
+    // knowledge, notes, conventions, git) so it plans/executes without
+    // re-discovering — the core token saving.
+    let context = crate::modules::agent_sessions::context::build_project_context(
+        pool.inner(),
+        &project_id,
+        &project_path,
+    )
+    .await
+    .ok();
+
     let map = map.inner().clone();
     let cwd = crate::shared::utils::expand_path(&project_path);
+    let pool = pool.inner().clone();
+    let handle = tokio::runtime::Handle::current();
 
     tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
         let config = SessionConfig {
@@ -146,13 +170,14 @@ pub async fn orchestrator_begin(
         let session = PlanSession::begin(
             &ClaudeBackend,
             planner,
-            Arc::new(NullStore),
+            Arc::new(SqliteStore::new(pool, handle)),
             config,
             BeginParams {
                 project_id,
                 task,
                 use_gsd,
                 permission_mode: permission_label(permission_mode).into(),
+                context,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -187,26 +212,129 @@ pub async fn orchestrator_execute(
     }
     .ok_or_else(|| format!("session not found: {session_id}"))?;
 
-    let channel = format!("orchestrator-progress-{session_id}");
-    tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
-        let mut s = session.lock().map_err(|e| format!("session lock: {e}"))?;
-        s.execute(|ev| {
+    let progress_channel = format!("orchestrator-progress-{session_id}");
+    let result_channel = format!("orchestrator-result-{session_id}");
+
+    // 1. Snapshot what we need under a brief lock.
+    let (config, plan) = {
+        let s = session.clone();
+        tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let g = s.lock().map_err(|e| format!("session lock: {e}"))?;
+            g.prepare_execution().map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("task join: {e}"))??
+    };
+
+    // 2. Run the long execution WITHOUT holding the session lock, so reads
+    //    (reopening the plan, polling) never block while it runs for minutes.
+    let handle = app_handle.clone();
+    let pc = progress_channel.clone();
+    let outcomes = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        super::executor::run_tiered(&ClaudeBackend, &config, &plan, |ev, step| {
             let line = format_exec_event(ev);
             if !line.is_empty() {
-                let _ = app_handle.emit(&channel, line);
+                let model = step.model.as_deref().unwrap_or("sonnet");
+                let _ = handle.emit(&pc, format!("[{}·{}] {}", step.ordinal + 1, model, line));
             }
         })
-        .map_err(|e| e.to_string())?;
-        Ok(SessionView::of(&s))
+        .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| format!("task join: {e}"))??;
+
+    // 3. Record outcomes under a brief lock.
+    let s = session.clone();
+    let (view, summary) = tokio::task::spawn_blocking(move || -> Result<(SessionView, String), String> {
+        let mut g = s.lock().map_err(|e| format!("session lock: {e}"))?;
+        let summary = g.finish_execution(&outcomes).map_err(|e| e.to_string())?;
+        Ok((SessionView::of(&g), summary))
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))??;
+
+    let _ = app_handle.emit(&result_channel, summary);
+    Ok(view)
 }
 
 /// List the installed skills the orchestrator can apply.
 #[command]
 pub async fn orchestrator_list_skills() -> Result<Vec<super::models::SkillDef>, String> {
     Ok(super::skills::builtin_skills())
+}
+
+/// List recent persisted plan sessions for a project (for the Plans list).
+#[command]
+pub async fn orchestrator_list_plans(
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+) -> Result<Vec<PlanSummary>, String> {
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+    list_plan_summaries(pool.inner(), &project_id, 50)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a plan session (removes it from the registry and storage).
+#[command]
+pub async fn orchestrator_delete_plan(
+    map: State<'_, PlanSessionMap>,
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<(), String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
+    // If live, stop and drop it from the registry (best effort).
+    let removed = {
+        let mut guard = map.inner().lock().map_err(|e| format!("registry lock: {e}"))?;
+        guard.remove(&session_id)
+    };
+    if let Some(sess) = removed {
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut s) = sess.lock() {
+                let _ = s.cancel();
+            }
+        })
+        .await;
+    }
+
+    delete_session(pool.inner(), &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reopen a plan: return the live session if still in the registry, otherwise
+/// load its latest persisted state from storage (read-only view).
+#[command]
+pub async fn orchestrator_load_plan(
+    map: State<'_, PlanSessionMap>,
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<SessionView, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+
+    // Prefer the live session (still interactive) if present.
+    let live = {
+        let guard = map.inner().lock().map_err(|e| format!("registry lock: {e}"))?;
+        guard.get(&session_id).cloned()
+    };
+    if let Some(sess) = live {
+        return tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
+            let s = sess.lock().map_err(|e| format!("session lock: {e}"))?;
+            Ok(SessionView::of(&s))
+        })
+        .await
+        .map_err(|e| format!("task join: {e}"))?;
+    }
+
+    // Otherwise reconstruct from storage.
+    match load_session(pool.inner(), &session_id)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Some((session, plan)) => Ok(SessionView::from_parts(&session, plan)),
+        None => Err(format!("plan not found: {session_id}")),
+    }
 }
 
 /// Get the current snapshot of a session.

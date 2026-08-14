@@ -19,13 +19,6 @@ use super::models::{
 use super::plan_ops::{apply_step_edit, can_confirm, draft_to_plan, merge_revision, StepEdit};
 use super::planner::Planner;
 
-/// Instruction that flips the session from planning to implementation. The plan
-/// is already in the session's context (same conversation), so this stays lean.
-const EXECUTION_PROMPT: &str = "The plan above is approved. Implement it now, \
-     working through the steps in order. Be lean — make the minimal changes that \
-     fully accomplish each step, and actually apply the edits and run the necessary \
-     commands. When finished, give a brief summary of what changed.";
-
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -40,6 +33,10 @@ pub struct BeginParams {
     pub task: String,
     pub use_gsd: bool,
     pub permission_mode: String,
+    /// Assembled project context (codebase knowledge, notes, conventions, git).
+    /// Primed into the session once so planning, revision, and execution all
+    /// benefit without the agent re-discovering the project.
+    pub context: Option<String>,
 }
 
 /// A live plan-first orchestration session.
@@ -49,6 +46,9 @@ pub struct PlanSession {
     convo: Conversation,
     planner: Box<dyn Planner>,
     store: Arc<dyn super::store::PlanStore>,
+    /// Base config (cwd, permission mode, model) reused to spawn per-step
+    /// subagents during model-tiered execution.
+    config: SessionConfig,
 }
 
 impl PlanSession {
@@ -75,7 +75,19 @@ impl PlanSession {
         };
         store.save_session(&session)?;
 
-        let convo = Conversation::start(backend, config)?;
+        let convo = Conversation::start(backend, config.clone())?;
+
+        // Prime the session with project context once; it stays in the
+        // conversation for every subsequent turn (plan, revise, execute).
+        if let Some(ctx) = params.context.as_deref() {
+            if !ctx.trim().is_empty() {
+                let _ = convo.ask(&format!(
+                    "Here is the context for the project you'll be working on. Read it and \
+                     rely on it instead of re-exploring; reply only with \"ok\".\n\n{ctx}"
+                ))?;
+            }
+        }
+
         let draft = planner.produce(&convo, &params.task)?;
         let plan = draft_to_plan(&draft, &session.id, 1);
         store.save_plan(&plan)?;
@@ -90,6 +102,7 @@ impl PlanSession {
             convo,
             planner,
             store,
+            config,
         })
     }
 
@@ -210,43 +223,54 @@ impl PlanSession {
             .update_session_status(&self.session.id, SessionStatus::Executing)
     }
 
-    /// Execute the confirmed plan through the live session, streaming each event
-    /// to `on_event`. On success every step is marked done and the session
-    /// completes; on failure the session is marked errored.
+    /// Snapshot the data needed to execute, under a brief lock. The caller then
+    /// runs `executor::run_tiered` **outside** any session lock — so the long
+    /// (minutes-long) execution never blocks reads like reopening the plan.
     ///
     /// Requires the session to be in `Executing` (i.e. [`confirm`] already ran).
-    /// ponytail: holds the session for the whole run — cancel-during-execution is
-    /// a follow-up; today the run completes or the session is closed.
-    pub fn execute<F: FnMut(&super::backend::BackendEvent)>(
-        &mut self,
-        on_event: F,
-    ) -> Result<()> {
+    pub fn prepare_execution(&self) -> Result<(SessionConfig, Plan)> {
         if self.session.status != SessionStatus::Executing {
             return Err(OrchestratorError::Validation(
                 "plan must be confirmed before executing".into(),
             ));
         }
+        Ok((self.config.clone(), self.require_plan()?.clone()))
+    }
 
-        let out = self.convo.ask_streaming(EXECUTION_PROMPT, on_event)?;
-
-        if out.is_error {
-            self.session.status = SessionStatus::Errored;
-            self.store
-                .update_session_status(&self.session.id, SessionStatus::Errored)?;
-            return Err(OrchestratorError::Backend(format!(
-                "execution failed: {}",
-                out.stderr.trim()
-            )));
-        }
-
+    /// Record execution outcomes (under a brief lock): mark each step done/failed,
+    /// set the session `Done`/`Errored`, persist, and return the joined summary.
+    pub fn finish_execution(&mut self, outcomes: &[super::executor::StepOutcome]) -> Result<String> {
         if let Some(plan) = self.plan.as_mut() {
-            for step in &mut plan.steps {
-                step.status = StepStatus::Done;
+            for outcome in outcomes {
+                if let Some(step) = plan.steps.iter_mut().find(|s| s.id == outcome.step_id) {
+                    step.status = if outcome.ok {
+                        StepStatus::Done
+                    } else {
+                        StepStatus::Failed
+                    };
+                }
             }
         }
-        self.session.status = SessionStatus::Done;
+        if let Some(plan) = self.plan.clone() {
+            self.store.save_plan(&plan)?;
+        }
+
+        let all_ok = !outcomes.is_empty() && outcomes.iter().all(|o| o.ok);
+        let final_status = if all_ok {
+            SessionStatus::Done
+        } else {
+            SessionStatus::Errored
+        };
+        self.session.status = final_status;
         self.store
-            .update_session_status(&self.session.id, SessionStatus::Done)
+            .update_session_status(&self.session.id, final_status)?;
+
+        Ok(outcomes
+            .iter()
+            .map(|o| o.summary.trim())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"))
     }
 
     /// Cancel the session and stop the underlying agent.
@@ -301,6 +325,7 @@ mod tests {
                 task: "build a thing".into(),
                 use_gsd: false,
                 permission_mode: "acceptEdits".into(),
+                context: None,
             },
         )
         .unwrap()
@@ -371,35 +396,41 @@ mod tests {
     }
 
     #[test]
-    fn execute_marks_done_and_streams_events() {
+    fn prepare_and_finish_completes_the_session() {
+        use crate::modules::orchestrator::executor::StepOutcome;
         let store = Arc::new(InMemoryStore::default());
         let mut s = begin_session(
             store.clone(),
-            vec![
-                vec![BackendEvent::AssistantText(plan_json("Goal", &["A", "B"])), completed()],
-                vec![BackendEvent::AssistantText("Implementing…".into()), completed()],
-            ],
+            vec![vec![BackendEvent::AssistantText(plan_json("Goal", &["A", "B"])), completed()]],
         );
         s.approve_all().unwrap();
         s.confirm().unwrap();
 
-        let mut count = 0;
-        s.execute(|_| count += 1).unwrap();
+        let (_cfg, plan) = s.prepare_execution().unwrap();
+        assert_eq!(plan.steps.len(), 2);
+
+        // Simulate successful per-step outcomes.
+        let outcomes: Vec<StepOutcome> = plan
+            .steps
+            .iter()
+            .map(|st| StepOutcome { step_id: st.id.clone(), ok: true, summary: "did it".into() })
+            .collect();
+        let summary = s.finish_execution(&outcomes).unwrap();
 
         assert_eq!(s.session().status, SessionStatus::Done);
         assert!(s.plan().unwrap().steps.iter().all(|st| st.status == StepStatus::Done));
-        assert!(count > 0, "execution should stream events");
+        assert!(summary.contains("did it"));
     }
 
     #[test]
-    fn execute_requires_confirmation() {
+    fn prepare_requires_confirmation() {
         let store = Arc::new(InMemoryStore::default());
-        let mut s = begin_session(
+        let s = begin_session(
             store,
             vec![vec![BackendEvent::AssistantText(plan_json("Goal", &["A"])), completed()]],
         );
-        // Still in Reviewing — execute must refuse.
-        assert!(s.execute(|_| {}).is_err());
+        // Still in Reviewing — prepare must refuse.
+        assert!(s.prepare_execution().is_err());
     }
 
     #[test]

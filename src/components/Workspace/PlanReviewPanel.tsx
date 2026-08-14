@@ -13,7 +13,10 @@ import type { SessionView, Plan, PlanStep } from '../../lib/orchestrator';
 interface PlanReviewPanelProps {
     projectId: string;
     projectPath: string;
-    task: string;
+    /** For a NEW plan. Ignored when `reopenId` is set. */
+    task?: string;
+    /** To REOPEN a persisted/live plan instead of starting a new one. */
+    reopenId?: string;
     useGsd?: boolean;
     model?: string | null;
     onClose: () => void;
@@ -50,7 +53,7 @@ const StatusDot: React.FC<{ status: PlanStep['status'] }> = ({ status }) => {
 };
 
 export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
-    projectId, projectPath, task, useGsd = false, model = null, onClose, onConfirmed,
+    projectId, projectPath, task, reopenId, useGsd = false, model = null, onClose, onConfirmed,
 }) => {
     const [session, setSession] = useState<SessionView | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -67,20 +70,42 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
     // Execution
     const [execLog, setExecLog] = useState<string[]>([]);
+    const [execResult, setExecResult] = useState<string | null>(null);
     const [executing, setExecuting] = useState(false);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
-    // Begin the session on mount.
+    // Begin a new session, or reopen an existing one, on mount.
     useEffect(() => {
         let cancelled = false;
         setBusy('planning');
-        orch.begin(projectId, projectPath, task, useGsd, model)
+        const start = reopenId
+            ? orch.loadPlan(reopenId)
+            : orch.begin(projectId, projectPath, task ?? '', useGsd, model);
+        start
             .then((v) => { if (!cancelled) setSession(v); })
             .catch((e) => { if (!cancelled) setError(String(e)); })
             .finally(() => { if (!cancelled) setBusy(null); });
         return () => { cancelled = true; };
-    }, [projectId, projectPath, task, useGsd, model]);
+    }, [projectId, projectPath, task, useGsd, model, reopenId]);
+
+    // If we reopened a plan that's still executing, attach to its live progress.
+    useEffect(() => {
+        const sid = session?.session_id;
+        if (!reopenId || !sid || session?.status !== 'executing') return;
+        let unlistenP: (() => void) | undefined;
+        let unlistenR: (() => void) | undefined;
+        setExecuting(true);
+        listen<string>(`orchestrator-progress-${sid}`, (e) => {
+            setExecLog((prev) => [...prev, e.payload]);
+        }).then((fn) => { unlistenP = fn; });
+        listen<string>(`orchestrator-result-${sid}`, (e) => {
+            setExecResult(e.payload);
+            setExecuting(false);
+            orch.loadPlan(sid).then(setSession).catch(() => {});
+        }).then((fn) => { unlistenR = fn; });
+        return () => { unlistenP?.(); unlistenR?.(); };
+    }, [reopenId, session?.session_id, session?.status]);
 
     const sessionId = session?.session_id;
     const plan: Plan | null = session?.plan ?? null;
@@ -133,8 +158,12 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const runExecution = useCallback(async (sid: string) => {
         setExecuting(true);
         setExecLog([]);
-        const unlisten = await listen<string>(`orchestrator-progress-${sid}`, (e) => {
+        setExecResult(null);
+        const unlistenProgress = await listen<string>(`orchestrator-progress-${sid}`, (e) => {
             setExecLog((prev) => [...prev, e.payload]);
+        });
+        const unlistenResult = await listen<string>(`orchestrator-result-${sid}`, (e) => {
+            setExecResult(e.payload);
         });
         try {
             const v = await orch.execute(sid);
@@ -144,7 +173,8 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         } catch (e) {
             toast.error(`Execution failed: ${e}`);
         } finally {
-            unlisten();
+            unlistenProgress();
+            unlistenResult();
             setExecuting(false);
         }
     }, [onConfirmed]);
@@ -163,17 +193,19 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         }
     };
 
-    const doCancel = async () => {
-        if (sessionId) { try { await orch.cancel(sessionId); } catch { /* ignore */ } }
-        onClose();
-    };
+    // Close keeps the plan — it's persisted and reopenable from the Plans list.
+    const doClose = () => onClose();
 
     // ---- render ----
     if (busy === 'planning' && !session) {
         return (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
                 <Loader2 className="w-6 h-6 animate-spin" />
-                <p className="text-[13px]">Planning: <span className="text-foreground/70">{task}</span></p>
+                <p className="text-[13px]">
+                    {reopenId
+                        ? 'Loading plan…'
+                        : <>Planning: <span className="text-foreground/70">{task}</span></>}
+                </p>
             </div>
         );
     }
@@ -205,7 +237,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                     <h2 className="text-[15px] font-semibold text-foreground leading-snug">{plan.goal}</h2>
                     <p className="text-[12px] text-muted-foreground mt-0.5 truncate">{session?.task}</p>
                 </div>
-                <button onClick={doCancel} className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-foreground/6 shrink-0">
+                <button onClick={doClose} className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-foreground/6 shrink-0">
                     <X className="w-4 h-4" />
                 </button>
             </div>
@@ -213,21 +245,33 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
             {/* Scrollable body */}
             <div className="flex-1 overflow-y-auto hide-scrollbar px-4 sm:px-6 py-4 space-y-4">
                 {(executing || execLog.length > 0) && (
-                    <div className="rounded-xl border border-border bg-[#0a0a0a] overflow-hidden">
-                        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50">
+                    <div className="rounded-xl border border-zinc-800 bg-[#0c0c0e] overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
                             {executing
                                 ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
                                 : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-                            <Terminal className="w-3.5 h-3.5 text-muted-foreground/60" />
-                            <span className="text-[12px] font-medium text-foreground">
-                                {executing ? 'Executing plan…' : 'Execution complete'}
+                            <Terminal className="w-3.5 h-3.5 text-zinc-500" />
+                            <span className="text-[12px] font-medium text-zinc-200">
+                                {executing ? 'Executing plan…' : 'Execution log'}
                             </span>
                         </div>
                         <div className="px-4 py-3 max-h-72 overflow-y-auto">
-                            <pre className="text-[11px] leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap break-words">
+                            <pre className="text-[11px] leading-relaxed font-mono text-zinc-300 whitespace-pre-wrap break-words">
                                 {execLog.join('\n')}
                             </pre>
                             <div ref={logEndRef} />
+                        </div>
+                    </div>
+                )}
+
+                {execResult && (
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 border-b border-emerald-500/20">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-[12px] font-semibold text-foreground">Result</span>
+                        </div>
+                        <div className="px-4 py-3">
+                            <Markdown>{execResult}</Markdown>
                         </div>
                     </div>
                 )}

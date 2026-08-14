@@ -11,6 +11,7 @@ import {
 import { TerminalGrid } from './TerminalGrid';
 import { SmartCommandStrip } from './SmartCommandStrip';
 import { PlanReviewPanel } from './PlanReviewPanel';
+import * as orch from '../../lib/orchestrator';
 import type { SessionMetrics } from '../../types';
 
 interface AgentSession {
@@ -83,7 +84,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
 
     const [view, setView] = useState<'dashboard' | 'grid'>('dashboard');
     const [planTask, setPlanTask] = useState<string | null>(null);
+    const [planReopenId, setPlanReopenId] = useState<string | null>(null);
     const [planUseGsd, setPlanUseGsd] = useState(false);
+    const [planSummaries, setPlanSummaries] = useState<orch.PlanSummary[]>([]);
+
+    const loadPlans = useCallback(async () => {
+        try {
+            setPlanSummaries(await orch.listPlans(projectId));
+        } catch {
+            // non-critical
+        }
+    }, [projectId]);
     const [focusedTerminalId, setFocusedTerminalId] = useState<string | null>(null);
     const [embeddedSessionIds] = useState<Set<string>>(() => new Set());
     const [taskSessionIds] = useState<Set<string>>(() => new Set());
@@ -120,9 +131,10 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         loadSessions();
         loadDiff();
         loadPorts();
+        loadPlans();
         const interval = setInterval(() => { loadSessions(); loadDiff(); loadPorts(); }, 5000);
         return () => clearInterval(interval);
-    }, [loadSessions, loadDiff, loadPorts]);
+    }, [loadSessions, loadDiff, loadPorts, loadPlans]);
 
     const handleLaunch = async () => {
         if (taskMode && !launchInstructions.trim()) {
@@ -262,16 +274,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         .filter(s => embeddedSessionIds.has(s.id))
         .map(s => s.id);
 
-    if (planTask) {
+    if (planTask || planReopenId) {
         return (
             <div className="h-full">
                 <PlanReviewPanel
                     projectId={projectId}
                     projectPath={projectPath}
-                    task={planTask}
+                    task={planTask ?? undefined}
+                    reopenId={planReopenId ?? undefined}
                     useGsd={planUseGsd}
                     model={selectedModel || null}
-                    onClose={() => setPlanTask(null)}
+                    onClose={() => { setPlanTask(null); setPlanReopenId(null); loadPlans(); }}
                 />
             </div>
         );
@@ -342,6 +355,48 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 projectPath={projectPath}
                                 onSpawnTask={handleSmartTask}
                             />
+
+                            {/* Recent Plans */}
+                            {planSummaries.length > 0 && (
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70 px-1">
+                                        <ListChecks className="w-3.5 h-3.5" /> Recent Plans
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {planSummaries.map((p) => (
+                                            <div
+                                                key={p.session_id}
+                                                onClick={() => setPlanReopenId(p.session_id)}
+                                                className="group w-full text-left flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 hover:border-foreground/20 transition-colors cursor-pointer"
+                                            >
+                                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                                    p.status === 'done' ? 'bg-emerald-400'
+                                                    : p.status === 'executing' ? 'bg-sky-400'
+                                                    : p.status === 'errored' ? 'bg-red-400'
+                                                    : p.status === 'cancelled' ? 'bg-muted-foreground/30'
+                                                    : 'bg-violet-400'}`} />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="text-[12px] font-medium text-foreground truncate">{p.goal ?? p.task}</div>
+                                                    <div className="text-[10px] text-muted-foreground/50">
+                                                        {p.status}{p.version ? ` · plan v${p.version}` : ''}{p.step_count ? ` · ${p.step_count} steps` : ''}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        orch.deletePlan(p.session_id).then(loadPlans).catch(() => {});
+                                                    }}
+                                                    className="p-1 rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                                    title="Delete plan"
+                                                >
+                                                    <X className="w-3.5 h-3.5" />
+                                                </button>
+                                                <ChevronRight className="w-4 h-4 text-muted-foreground/30 shrink-0" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Quick actions bar */}
                             <div className="flex items-center gap-2 flex-wrap">
