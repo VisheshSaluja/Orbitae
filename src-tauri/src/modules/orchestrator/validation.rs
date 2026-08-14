@@ -40,11 +40,30 @@ pub enum FindingAction {
     Escalate,
 }
 
+/// Per-finding severity — assigned by the reviewer (contextual judgment), not a
+/// hardcoded weight. Mirrors no-mistakes' error/warning taxonomy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    /// A real defect — breakage, a bug, a security hole, or an intent mismatch.
+    Error,
+    /// A concern worth a look, but not clearly wrong.
+    Warning,
+}
+
+impl Default for Severity {
+    fn default() -> Self {
+        // Absent/unclear severity is treated as the safer, higher one.
+        Severity::Error
+    }
+}
+
 /// A single review finding.
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
     pub title: String,
     pub detail: String,
+    pub severity: Severity,
     pub action: FindingAction,
 }
 
@@ -54,8 +73,9 @@ pub struct ValidationReport {
     pub checks: Vec<Check>,
     pub findings: Vec<Finding>,
     pub risk_level: RiskLevel,
-    /// 0–100.
-    pub risk_score: u32,
+    /// The objective conditions that determined the risk level — so it's
+    /// explainable, not a mystery number.
+    pub risk_reasons: Vec<String>,
     pub summary: String,
 }
 
@@ -127,10 +147,13 @@ fn build_review_prompt(intent: &str, diff: &str) -> String {
          Find real problems: bugs, missed edge cases, mismatches with the intent, \
          security issues. Ignore style nits already caught by linters. Output ONLY \
          a JSON object:\n\
-         {{\"findings\":[{{\"title\":\"short\",\"detail\":\"why it's a problem\",\"action\":\"auto_fix\"|\"escalate\"}}]}}\n\
-         Use \"escalate\" for anything touching intent or product behavior; \
-         \"auto_fix\" only for mechanical, unambiguous fixes. If you genuinely find \
-         nothing wrong, return {{\"findings\":[]}}."
+         {{\"findings\":[{{\"title\":\"short\",\"detail\":\"why it's a problem\",\"severity\":\"error\"|\"warning\",\"action\":\"auto_fix\"|\"escalate\"}}]}}\n\
+         - severity \"error\": a real defect — breakage, a bug, a security hole, or \
+         a mismatch with the intent. severity \"warning\": a concern worth a look \
+         but not clearly wrong.\n\
+         - action \"escalate\" for anything touching intent or product behavior; \
+         \"auto_fix\" only for mechanical, unambiguous fixes.\n\
+         If you genuinely find nothing wrong, return {{\"findings\":[]}}."
     )
 }
 
@@ -142,6 +165,8 @@ struct FindingsWire {
 struct FindingWire {
     title: String,
     detail: String,
+    #[serde(default)]
+    severity: Severity,
     action: FindingAction,
 }
 
@@ -155,30 +180,51 @@ fn parse_findings(text: &str) -> Vec<Finding> {
         .map(|w| {
             w.findings
                 .into_iter()
-                .map(|f| Finding { title: f.title, detail: f.detail, action: f.action })
+                .map(|f| Finding {
+                    title: f.title,
+                    detail: f.detail,
+                    severity: f.severity,
+                    action: f.action,
+                })
                 .collect()
         })
         .unwrap_or_default()
 }
 
-/// Compute a 0–100 risk score and level from checks, findings, and diff size.
-fn compute_risk(checks: &[Check], findings: &[Finding], diff_lines: usize) -> (RiskLevel, u32) {
-    let failed = checks.iter().filter(|c| !c.passed).count() as u32;
-    let escalations = findings.iter().filter(|f| f.action == FindingAction::Escalate).count() as u32;
-    let autofixes = findings.iter().filter(|f| f.action == FindingAction::AutoFix).count() as u32;
+/// Assess risk **categorically** from objective conditions, returning the level
+/// and the concrete reasons for it. No weighted numbers: each tier maps to a
+/// verifiable fact, so the assessment is explainable and defensible.
+///
+/// - **High** — a deterministic check failed, or a blocking (`error`) escalation
+///   exists. Both are objectively "must look."
+/// - **Medium** — there's at least one escalation (a human decision to make).
+/// - **Low** — checks pass and nothing was escalated.
+fn assess_risk(checks: &[Check], findings: &[Finding]) -> (RiskLevel, Vec<String>) {
+    let failed: Vec<&str> = checks.iter().filter(|c| !c.passed).map(|c| c.name.as_str()).collect();
+    let blocking = findings
+        .iter()
+        .filter(|f| f.action == FindingAction::Escalate && f.severity == Severity::Error)
+        .count();
+    let escalations = findings.iter().filter(|f| f.action == FindingAction::Escalate).count();
 
-    let size_score = if diff_lines > 400 { 25 } else if diff_lines > 100 { 12 } else { 0 };
-    let score = (failed * 35 + escalations * 20 + autofixes * 5 + size_score).min(100);
+    let mut reasons = Vec::new();
+    if !failed.is_empty() {
+        reasons.push(format!("check(s) failed: {}", failed.join(", ")));
+    }
+    if blocking > 0 {
+        reasons.push(format!("{blocking} blocking finding(s)"));
+    }
 
-    // A failed deterministic check is never "low".
-    let level = if score >= 60 || failed > 0 {
+    let level = if !failed.is_empty() || blocking > 0 {
         RiskLevel::High
-    } else if score >= 25 {
+    } else if escalations > 0 {
+        reasons.push(format!("{escalations} finding(s) to review"));
         RiskLevel::Medium
     } else {
+        reasons.push("all checks passed, nothing flagged".to_string());
         RiskLevel::Low
     };
-    (level, score)
+    (level, reasons)
 }
 
 /// Run the bounded validation pass and return a report.
@@ -196,14 +242,11 @@ pub fn run_validation(
 ) -> Result<ValidationReport> {
     let checks = run_checks(cwd);
     let diff = working_diff(cwd);
-    let diff_lines = diff.lines().count();
 
-    // Preliminary risk from deterministic signals only, to decide whether the
-    // expensive review is worth running.
-    let (prelim_level, _) = compute_risk(&checks, &[], diff_lines);
-    let run_review = settings.validation != ValidationMode::Off
-        && prelim_level >= settings.risk_threshold
-        && !diff.trim().is_empty();
+    // The review runs when validation is on and there's an actual change to
+    // judge. Cost is bounded (one pass, capped diff, the budget) — no arbitrary
+    // size threshold deciding it.
+    let run_review = settings.validation != ValidationMode::Off && !diff.trim().is_empty();
 
     let findings = if run_review {
         // A FRESH agent (not the author) reviews — that's what makes it honest.
@@ -215,27 +258,24 @@ pub fn run_validation(
         Vec::new()
     };
 
-    let (risk_level, risk_score) = compute_risk(&checks, &findings, diff_lines);
-    let failed: Vec<&str> = checks.iter().filter(|c| !c.passed).map(|c| c.name.as_str()).collect();
+    let (risk_level, risk_reasons) = assess_risk(&checks, &findings);
+    let passed = checks.iter().filter(|c| c.passed).count();
     let summary = format!(
-        "{} check(s), {} passed{}; {} finding(s), {} to review. Risk: {:?}.",
+        "{}/{} checks passed; {} finding(s) to review.",
+        passed,
         checks.len(),
-        checks.iter().filter(|c| c.passed).count(),
-        if failed.is_empty() { String::new() } else { format!(" (failed: {})", failed.join(", ")) },
-        findings.len(),
         findings.iter().filter(|f| f.action == FindingAction::Escalate).count(),
-        risk_level,
     );
 
-    Ok(ValidationReport { checks, findings, risk_level, risk_score, summary })
+    Ok(ValidationReport { checks, findings, risk_level, risk_reasons, summary })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn f(action: FindingAction) -> Finding {
-        Finding { title: "t".into(), detail: "d".into(), action }
+    fn f(severity: Severity, action: FindingAction) -> Finding {
+        Finding { title: "t".into(), detail: "d".into(), severity, action }
     }
     fn passed(name: &str) -> Check {
         Check { name: name.into(), passed: true, output: String::new() }
@@ -253,14 +293,22 @@ mod tests {
     }
 
     #[test]
-    fn parses_findings_json() {
+    fn parses_findings_with_severity() {
         let text = "Here you go:\n```json\n{\"findings\":[\
-            {\"title\":\"npe\",\"detail\":\"x can be null\",\"action\":\"escalate\"},\
-            {\"title\":\"fmt\",\"detail\":\"spacing\",\"action\":\"auto_fix\"}]}\n```";
+            {\"title\":\"npe\",\"detail\":\"x can be null\",\"severity\":\"error\",\"action\":\"escalate\"},\
+            {\"title\":\"fmt\",\"detail\":\"spacing\",\"severity\":\"warning\",\"action\":\"auto_fix\"}]}\n```";
         let fs = parse_findings(text);
         assert_eq!(fs.len(), 2);
+        assert_eq!(fs[0].severity, Severity::Error);
         assert_eq!(fs[0].action, FindingAction::Escalate);
+        assert_eq!(fs[1].severity, Severity::Warning);
         assert_eq!(fs[1].action, FindingAction::AutoFix);
+    }
+
+    #[test]
+    fn missing_severity_defaults_to_error() {
+        let fs = parse_findings("{\"findings\":[{\"title\":\"x\",\"detail\":\"y\",\"action\":\"escalate\"}]}");
+        assert_eq!(fs[0].severity, Severity::Error);
     }
 
     #[test]
@@ -270,21 +318,28 @@ mod tests {
     }
 
     #[test]
-    fn failed_check_is_high_risk() {
-        let (level, score) = compute_risk(&[failed("build")], &[], 10);
+    fn failed_check_is_high_with_reason() {
+        let (level, reasons) = assess_risk(&[failed("build")], &[]);
         assert_eq!(level, RiskLevel::High);
-        assert!(score >= 35);
+        assert!(reasons.iter().any(|r| r.contains("build")));
     }
 
     #[test]
-    fn clean_small_change_is_low_risk() {
-        let (level, _) = compute_risk(&[passed("build"), passed("lint")], &[], 8);
+    fn blocking_escalation_is_high() {
+        let (level, _) = assess_risk(&[passed("build")], &[f(Severity::Error, FindingAction::Escalate)]);
+        assert_eq!(level, RiskLevel::High);
+    }
+
+    #[test]
+    fn warning_escalation_is_medium() {
+        let (level, _) = assess_risk(&[passed("build")], &[f(Severity::Warning, FindingAction::Escalate)]);
+        assert_eq!(level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn clean_change_is_low_with_reason() {
+        let (level, reasons) = assess_risk(&[passed("build"), passed("lint")], &[]);
         assert_eq!(level, RiskLevel::Low);
-    }
-
-    #[test]
-    fn escalations_raise_risk() {
-        let (level, _) = compute_risk(&[passed("build")], &[f(FindingAction::Escalate), f(FindingAction::Escalate)], 20);
-        assert!(level >= RiskLevel::Medium);
+        assert!(reasons.iter().any(|r| r.contains("nothing flagged")));
     }
 }

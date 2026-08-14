@@ -450,8 +450,9 @@ const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; 
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="text-[12px] font-semibold text-foreground">Review</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${risk.cls}`}>
-                    {risk.label} · {report.risk_score}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${risk.cls}`}
+                    title={report.risk_reasons.join(' · ')}>
+                    {risk.label}
                 </span>
                 <div className="flex-1" />
                 <button onClick={onRerun} disabled={busy} className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-foreground/6 disabled:opacity-40" title="Re-run review">
@@ -459,6 +460,12 @@ const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; 
                 </button>
             </div>
             <div className="px-4 py-3 space-y-3">
+                {/* Why this risk level — the reasons, not a mystery number */}
+                {report.risk_reasons.length > 0 && (
+                    <div className="text-[11px] text-muted-foreground">
+                        {report.risk_reasons.join(' · ')}
+                    </div>
+                )}
                 {/* Deterministic checks */}
                 <div className="space-y-1">
                     {report.checks.map((c) => (
@@ -481,14 +488,21 @@ const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; 
                 {escalations.length > 0 && (
                     <div className="space-y-1.5">
                         <span className="text-[11px] font-medium text-amber-400/80">{escalations.length} to review</span>
-                        {escalations.map((f, i) => (
-                            <div key={i} className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5">
-                                <div className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-                                    <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" /> {f.title}
+                        {escalations.map((f, i) => {
+                            const isError = f.severity === 'error';
+                            return (
+                                <div key={i} className={`rounded-lg border p-2.5 ${isError ? 'border-red-500/25 bg-red-500/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
+                                    <div className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+                                        {isError
+                                            ? <XCircle className="w-3 h-3 text-red-400 shrink-0" />
+                                            : <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />}
+                                        {f.title}
+                                        <span className={`text-[9px] px-1 py-0.5 rounded uppercase font-semibold ${isError ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>{f.severity}</span>
+                                    </div>
+                                    <div className="text-[11px] text-muted-foreground mt-1">{f.detail}</div>
                                 </div>
-                                <div className="text-[11px] text-muted-foreground mt-1">{f.detail}</div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
 

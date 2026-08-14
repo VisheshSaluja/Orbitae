@@ -82,6 +82,7 @@ export interface Check {
 export interface Finding {
     title: string;
     detail: string;
+    severity: 'error' | 'warning';
     action: 'auto_fix' | 'escalate';
 }
 
@@ -89,7 +90,8 @@ export interface ValidationReport {
     checks: Check[];
     findings: Finding[];
     risk_level: RiskLevel;
-    risk_score: number;
+    /** The objective reasons the risk level was assigned (explainable, not a number). */
+    risk_reasons: string[];
     summary: string;
 }
 
