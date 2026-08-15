@@ -337,54 +337,20 @@ pub async fn scan_listening_ports(
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
 
     tokio::task::spawn_blocking(move || {
-        let output = std::process::Command::new("lsof")
-            .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
-            .output()
-            .map_err(|e| format!("Failed to run lsof: {}", e))?;
-
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
         let expanded_path = crate::shared::utils::expand_path(&project_path);
 
-        let mut ports: Vec<ListeningPort> = Vec::new();
-        let mut seen_ports = std::collections::HashSet::new();
-
-        for line in stdout.lines().skip(1) {
-            let cols: Vec<&str> = line.split_whitespace().collect();
-            if cols.len() < 9 { continue; }
-
-            let process_name = cols[0].to_string();
-            let pid_str = cols[1];
-            let name_col = cols[cols.len() - 1];
-
-            let port: u16 = match name_col.rsplit(':').next().and_then(|p| p.parse().ok()) {
-                Some(p) => p,
-                None => continue,
-            };
-
-            if !seen_ports.insert(port) { continue; }
-
-            let pid: u32 = match pid_str.parse() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-
-            let cwd = get_process_cwd(pid);
-            let is_project = cwd.as_ref().map_or(false, |c| c.starts_with(&expanded_path));
-
-            ports.push(ListeningPort {
-                port,
-                pid,
-                process: process_name,
-                is_project,
-            });
-        }
+        let mut ports: Vec<ListeningPort> = crate::shared::ports::listening_ports()
+            .into_iter()
+            .map(|s| {
+                let is_project = crate::shared::ports::process_cwd(s.pid)
+                    .as_ref()
+                    .map_or(false, |c| c.starts_with(&expanded_path));
+                ListeningPort { port: s.port, pid: s.pid, process: s.process, is_project }
+            })
+            .collect();
 
         ports.sort_by_key(|p| (!p.is_project, p.port));
-        Ok(ports)
+        Ok::<_, String>(ports)
     })
     .await
     .map_err(|e| format!("task join failed: {e}"))?
@@ -396,24 +362,6 @@ pub struct ListeningPort {
     pub pid: u32,
     pub process: String,
     pub is_project: bool,
-}
-
-/// Get the working directory of a process by PID (macOS).
-fn get_process_cwd(pid: u32) -> Option<String> {
-    let output = std::process::Command::new("lsof")
-        .args(["-p", &pid.to_string(), "-d", "cwd", "-Fn"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() { return None; }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix('n') {
-            return Some(path.to_string());
-        }
-    }
-    None
 }
 
 /// Launch an embedded agent session inside Orbitae.

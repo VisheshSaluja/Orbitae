@@ -207,45 +207,15 @@ async fn execute_direct(
         }
 
         "listening_ports" => {
-            let output = tokio::task::spawn_blocking(|| {
-                std::process::Command::new("lsof")
-                    .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
-                    .output()
-            })
-            .await
-            .map_err(|e| format!("task join failed: {e}"))?
-            .map_err(|e| format!("lsof failed: {e}"))?;
+            let mut sockets = tokio::task::spawn_blocking(crate::shared::ports::listening_ports)
+                .await
+                .map_err(|e| format!("task join failed: {e}"))?;
+            sockets.sort_by_key(|s| s.port);
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut ports: Vec<serde_json::Value> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-
-            for line in stdout.lines().skip(1) {
-                let cols: Vec<&str> = line.split_whitespace().collect();
-                if cols.len() < 9 {
-                    continue;
-                }
-
-                let port: u16 = match cols.last().and_then(|c| c.rsplit(':').next()).and_then(|p| p.parse().ok()) {
-                    Some(p) => p,
-                    None => continue,
-                };
-
-                if !seen.insert(port) {
-                    continue;
-                }
-
-                let process = cols[0].to_string();
-                let pid: u32 = cols[1].parse().unwrap_or(0);
-
-                ports.push(serde_json::json!({
-                    "port": port,
-                    "process": process,
-                    "pid": pid,
-                }));
-            }
-
-            ports.sort_by_key(|p| p["port"].as_u64().unwrap_or(0));
+            let ports: Vec<serde_json::Value> = sockets
+                .iter()
+                .map(|s| serde_json::json!({ "port": s.port, "process": s.process, "pid": s.pid }))
+                .collect();
 
             Ok(serde_json::json!({
                 "ports": ports,

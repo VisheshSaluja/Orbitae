@@ -28,7 +28,6 @@ thiserror = "2"
 tauri = { version = "2.9.5", features = [] }
 tauri-plugin-log = "2"
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "mysql"] }
-keyring = "2"
 anyhow = "1.0"
 dotenv = "0.15"
 tokio = { version = "1", features = ["full"] }
@@ -50,8 +49,3 @@ serde_yaml = "0.9"
 [[bin]]
 name = "orbitae-mcp"
 path = "src/mcp_server.rs"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-localauthentication-rs = "0.1.0"
-security-framework = "3.5.1"
-security-framework-sys = "2.15.0"

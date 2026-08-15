@@ -170,7 +170,7 @@ fn build_cli_command(
 
 /// Write instructions to a temp file, returning the path.
 fn write_context_file(session_id: &str, instructions: &str) -> Result<String> {
-    let path = format!("/tmp/orbitae-ctx-{}.md", session_id);
+    let path = crate::shared::utils::ctx_file_path_str(session_id);
     std::fs::write(&path, instructions)
         .context("Failed to write context file")?;
     Ok(path)

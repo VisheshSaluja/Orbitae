@@ -67,7 +67,7 @@ pub fn spawn_autonomous(
 ) -> Result<u32, String> {
     let expanded = crate::shared::utils::expand_path(project_path);
 
-    let ctx_path = format!("/tmp/orbitae-ctx-{}.md", session_id);
+    let ctx_path = crate::shared::utils::ctx_file_path_str(session_id);
     write_restricted_file(&ctx_path, prompt)
         .map_err(|e| format!("Failed to write context file: {}", e))?;
 
@@ -196,11 +196,9 @@ pub fn is_autonomous_alive(sessions: &AutonomousSessionMap, session_id: &str) ->
 pub fn stop_autonomous(sessions: &AutonomousSessionMap, session_id: &str) -> Result<(), String> {
     let mut map = sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
     if let Some(session) = map.remove(session_id) {
-        let _ = std::process::Command::new("kill")
-            .args(["-15", &session.pid.to_string()])
-            .status();
+        crate::shared::utils::kill_process(session.pid);
     }
-    let ctx_path = format!("/tmp/orbitae-ctx-{}.md", session_id);
+    let ctx_path = crate::shared::utils::ctx_file_path_str(session_id);
     let _ = std::fs::remove_file(&ctx_path);
     Ok(())
 }

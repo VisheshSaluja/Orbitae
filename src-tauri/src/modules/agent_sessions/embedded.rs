@@ -185,7 +185,7 @@ fn build_agent_command(
         }
 
         if let Some(instr) = instructions {
-            let ctx_path = format!("/tmp/orbitae-ctx-{}.md", session_id);
+            let ctx_path = crate::shared::utils::ctx_file_path_str(session_id);
             std::fs::write(&ctx_path, instr)
                 .map_err(|e| format!("Failed to write context file: {}", e))?;
             cmd.arg(format!(
