@@ -89,13 +89,15 @@ export interface Finding {
 export interface ValidationReport {
     checks: Check[];
     findings: Finding[];
+    /** Titles of mechanical findings that were auto-fixed. */
+    auto_fixed: string[];
     risk_level: RiskLevel;
     /** The objective reasons the risk level was assigned (explainable, not a number). */
     risk_reasons: string[];
     summary: string;
 }
 
-/** Run the bounded validation pass (checks + gated adversarial review). */
+/** Run the bounded validation pass (checks + gated adversarial review + auto-fix). */
 export function validate(
     projectId: string,
     projectPath: string,
@@ -106,6 +108,20 @@ export function validate(
         projectPath,
         sessionId,
     });
+}
+
+export interface PrResult {
+    branch: string;
+    committed: boolean;
+    pushed: boolean;
+    pr_url: string | null;
+    compare_url: string | null;
+    message: string;
+}
+
+/** Commit the change under the user's identity and open a PR (never merges). */
+export function createPr(projectPath: string, title: string, body: string): Promise<PrResult> {
+    return invokeCommand<PrResult>('orchestrator_create_pr', { projectPath, title, body });
 }
 
 /** Start a plan-first session and produce the first plan for a task. */

@@ -331,6 +331,28 @@ pub async fn orchestrator_validate(
     .map_err(|e| format!("task join: {e}"))?
 }
 
+/// Commit the validated change under the developer's identity and open a PR
+/// (never merges — the human is the merge gate).
+#[command]
+pub async fn orchestrator_create_pr(
+    project_path: String,
+    title: String,
+    body: String,
+) -> Result<super::pr::PrResult, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_content(&title, "title").map_err(|e| e.to_string())?;
+    if title.trim().is_empty() {
+        return Err("a title is required".into());
+    }
+
+    let cwd = crate::shared::utils::expand_path(&project_path);
+    tokio::task::spawn_blocking(move || -> Result<super::pr::PrResult, String> {
+        super::pr::create_pr(&super::pr::PrRequest { cwd, title, body }).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
 /// List recent persisted plan sessions for a project (for the Plans list).
 #[command]
 pub async fn orchestrator_list_plans(

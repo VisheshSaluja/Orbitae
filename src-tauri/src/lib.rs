@@ -170,6 +170,7 @@ pub fn run() {
         // Orchestrator (plan-first)
         modules::orchestrator::commands::orchestrator_list_skills,
         modules::orchestrator::commands::orchestrator_validate,
+        modules::orchestrator::commands::orchestrator_create_pr,
         modules::orchestrator::commands::orchestrator_list_plans,
         modules::orchestrator::commands::orchestrator_load_plan,
         modules::orchestrator::commands::orchestrator_delete_plan,

@@ -19,6 +19,7 @@ pub mod executor;
 pub mod models;
 pub mod plan_ops;
 pub mod planner;
+pub mod pr;
 pub mod session;
 pub mod settings;
 pub mod skills;

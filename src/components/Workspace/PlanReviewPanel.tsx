@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
-    ShieldCheck, AlertTriangle, XCircle,
+    ShieldCheck, AlertTriangle, XCircle, GitPullRequest, ExternalLink,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
 import type { SessionView, Plan, PlanStep, ValidationReport, RiskLevel } from '../../lib/orchestrator';
@@ -77,6 +77,8 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     // Validation (Review & Ship)
     const [validating, setValidating] = useState(false);
     const [report, setReport] = useState<ValidationReport | null>(null);
+    const [prBusy, setPrBusy] = useState(false);
+    const [prResult, setPrResult] = useState<orch.PrResult | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
@@ -210,12 +212,27 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!sessionId) return;
         setValidating(true);
         setReport(null);
+        setPrResult(null);
         try {
             setReport(await orch.validate(projectId, projectPath, sessionId));
         } catch (e) {
             toast.error(`Validation failed: ${e}`);
         } finally {
             setValidating(false);
+        }
+    };
+
+    const doCreatePr = async () => {
+        if (!plan) return;
+        setPrBusy(true);
+        try {
+            const res = await orch.createPr(projectPath, plan.goal, buildPrBody(plan.goal, report));
+            setPrResult(res);
+            toast.success(res.pr_url ? 'PR opened' : res.message);
+        } catch (e) {
+            toast.error(`Create PR failed: ${e}`);
+        } finally {
+            setPrBusy(false);
         }
     };
 
@@ -302,10 +319,25 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                     </div>
                 )}
 
-                {/* Review & Ship — validation */}
+                {/* Review & Ship — validation → PR */}
                 {session?.status === 'done' && (
                     report ? (
-                        <ValidationView report={report} onRerun={runValidation} busy={validating} />
+                        <>
+                            <ValidationView report={report} onRerun={runValidation} busy={validating} />
+                            {prResult ? (
+                                <PrResultCard result={prResult} />
+                            ) : (
+                                <button
+                                    onClick={doCreatePr}
+                                    disabled={prBusy}
+                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-[13px] font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50"
+                                >
+                                    {prBusy
+                                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening PR…</>
+                                        : <><GitPullRequest className="w-4 h-4" /> Create PR</>}
+                                </button>
+                            )}
+                        </>
                     ) : (
                         <button
                             onClick={runValidation}
@@ -435,6 +467,50 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     );
 };
 
+/** Build a clean PR body from the goal + validation report (no AI attribution). */
+function buildPrBody(goal: string, report: ValidationReport | null): string {
+    const lines = [`## Summary`, ``, goal, ``];
+    if (report) {
+        lines.push(`## Validation`, ``, `**Risk: ${report.risk_level}** — ${report.risk_reasons.join('; ')}`, ``);
+        if (report.checks.length) {
+            lines.push(`### Checks`);
+            for (const c of report.checks) lines.push(`- ${c.passed ? '✅' : '❌'} ${c.name}`);
+            lines.push(``);
+        }
+        if (report.auto_fixed.length) {
+            lines.push(`### Auto-fixed`);
+            for (const t of report.auto_fixed) lines.push(`- ${t}`);
+            lines.push(``);
+        }
+        const escalations = report.findings.filter((f) => f.action === 'escalate');
+        if (escalations.length) {
+            lines.push(`### Findings to review`);
+            for (const f of escalations) lines.push(`- **[${f.severity}]** ${f.title} — ${f.detail}`);
+            lines.push(``);
+        }
+    }
+    return lines.join('\n');
+}
+
+const PrResultCard: React.FC<{ result: orch.PrResult }> = ({ result }) => {
+    const link = result.pr_url || result.compare_url;
+    return (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
+                <GitPullRequest className="w-4 h-4 text-emerald-400" /> {result.message}
+            </div>
+            <div className="text-[11px] text-muted-foreground font-mono">branch: {result.branch}</div>
+            {link && (
+                <a href={link} target="_blank" rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[12px] text-sky-400 hover:underline">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    {result.pr_url ? 'View pull request' : 'Open a pull request'}
+                </a>
+            )}
+        </div>
+    );
+};
+
 const RISK_STYLES: Record<RiskLevel, { label: string; cls: string }> = {
     low: { label: 'Low risk — safe to merge', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
     medium: { label: 'Medium risk — worth a look', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
@@ -443,7 +519,6 @@ const RISK_STYLES: Record<RiskLevel, { label: string; cls: string }> = {
 
 const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; busy: boolean }> = ({ report, onRerun, busy }) => {
     const escalations = report.findings.filter((f) => f.action === 'escalate');
-    const autofixes = report.findings.filter((f) => f.action === 'auto_fix');
     const risk = RISK_STYLES[report.risk_level];
     return (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -506,9 +581,14 @@ const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; 
                     </div>
                 )}
 
-                {autofixes.length > 0 && (
-                    <div className="text-[11px] text-muted-foreground/60">
-                        {autofixes.length} mechanical finding{autofixes.length !== 1 ? 's' : ''} (auto-fixable)
+                {report.auto_fixed.length > 0 && (
+                    <div className="space-y-1">
+                        <span className="text-[11px] font-medium text-emerald-400/80">{report.auto_fixed.length} auto-fixed</span>
+                        {report.auto_fixed.map((t, i) => (
+                            <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                <Check className="w-3 h-3 text-emerald-400 shrink-0" /> {t}
+                            </div>
+                        ))}
                     </div>
                 )}
 

@@ -71,7 +71,11 @@ pub struct Finding {
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidationReport {
     pub checks: Vec<Check>,
+    /// Findings the developer must judge (escalations). Auto-fixed ones are
+    /// removed from here and listed in `auto_fixed` instead.
     pub findings: Vec<Finding>,
+    /// Titles of the mechanical findings that were applied automatically.
+    pub auto_fixed: Vec<String>,
     pub risk_level: RiskLevel,
     /// The objective conditions that determined the risk level — so it's
     /// explainable, not a mystery number.
@@ -191,6 +195,30 @@ fn parse_findings(text: &str) -> Vec<Finding> {
         .unwrap_or_default()
 }
 
+/// Apply the mechanical (auto-fix) findings via a focused agent pass. Only the
+/// listed fixes — nothing escalated, nothing else.
+fn apply_autofixes(
+    backend: &dyn AgentBackend,
+    config: &SessionConfig,
+    findings: &[&Finding],
+) -> Result<()> {
+    let list = findings
+        .iter()
+        .enumerate()
+        .map(|(i, f)| format!("{}. {} — {}", i + 1, f.title, f.detail))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "Apply ONLY these specific mechanical fixes to the code. Make no other \
+         changes, and do not touch anything not listed here.\n\n{list}\n\n\
+         Apply them now, then reply with a one-line confirmation."
+    );
+    let convo = Conversation::start(backend, config.clone())?;
+    let _ = convo.ask(&prompt)?;
+    let _ = convo.stop();
+    Ok(())
+}
+
 /// Assess risk **categorically** from objective conditions, returning the level
 /// and the concrete reasons for it. No weighted numbers: each tier maps to a
 /// verifiable fact, so the assessment is explainable and defensible.
@@ -240,7 +268,7 @@ pub fn run_validation(
     intent: &str,
     settings: &OrchestrationSettings,
 ) -> Result<ValidationReport> {
-    let checks = run_checks(cwd);
+    let mut checks = run_checks(cwd);
     let diff = working_diff(cwd);
 
     // The review runs when validation is on and there's an actual change to
@@ -248,7 +276,7 @@ pub fn run_validation(
     // size threshold deciding it.
     let run_review = settings.validation != ValidationMode::Off && !diff.trim().is_empty();
 
-    let findings = if run_review {
+    let mut findings = if run_review {
         // A FRESH agent (not the author) reviews — that's what makes it honest.
         let convo = Conversation::start(backend, config.clone())?;
         let out = convo.ask(&build_review_prompt(intent, &diff))?;
@@ -258,16 +286,38 @@ pub fn run_validation(
         Vec::new()
     };
 
+    // Auto-fix the *mechanical* findings only — never anything escalated. Bounded
+    // by the user's cap; re-runs the deterministic checks afterward to confirm
+    // the fixes didn't break the build.
+    let mut auto_fixed: Vec<String> = Vec::new();
+    let fixable_titles: Vec<String> = findings
+        .iter()
+        .filter(|f| f.action == FindingAction::AutoFix)
+        .map(|f| f.title.clone())
+        .collect();
+    if settings.max_autofix_cycles > 0 && !fixable_titles.is_empty() {
+        let fixable: Vec<&Finding> =
+            findings.iter().filter(|f| f.action == FindingAction::AutoFix).collect();
+        let applied = apply_autofixes(backend, config, &fixable);
+        drop(fixable);
+        if applied.is_ok() {
+            auto_fixed = fixable_titles;
+            checks = run_checks(cwd); // re-verify after the edits
+            findings.retain(|f| f.action != FindingAction::AutoFix);
+        }
+    }
+
     let (risk_level, risk_reasons) = assess_risk(&checks, &findings);
     let passed = checks.iter().filter(|c| c.passed).count();
     let summary = format!(
-        "{}/{} checks passed; {} finding(s) to review.",
+        "{}/{} checks passed; {} auto-fixed; {} to review.",
         passed,
         checks.len(),
+        auto_fixed.len(),
         findings.iter().filter(|f| f.action == FindingAction::Escalate).count(),
     );
 
-    Ok(ValidationReport { checks, findings, risk_level, risk_reasons, summary })
+    Ok(ValidationReport { checks, findings, auto_fixed, risk_level, risk_reasons, summary })
 }
 
 #[cfg(test)]
