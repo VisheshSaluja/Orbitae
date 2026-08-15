@@ -30,10 +30,23 @@ export interface ProjectNote {
 
 export type AutonomousPermissionMode = 'acceptEdits' | 'skip';
 
+/** User-configurable orchestration limits & budget (mirrors the Rust defaults). */
+export interface OrchestrationSettings {
+    planner: 'lean' | 'gsd';
+    validation: 'off' | 'manual' | 'auto';
+    max_review_passes: number;
+    max_reviewers: number;
+    max_autofix_cycles: number;
+    risk_threshold: 'low' | 'medium' | 'high';
+    max_tokens_per_run: number;
+}
+
 export interface ProjectSettings {
     note_labels: Record<string, string>;
     /** How autonomous task sessions handle tool permissions. Defaults to 'acceptEdits'. */
     autonomous_permission_mode?: AutonomousPermissionMode;
+    /** Orchestration limits & budget. */
+    orchestration?: Partial<OrchestrationSettings>;
 }
 
 export interface GitStatus {

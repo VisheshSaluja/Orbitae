@@ -2,20 +2,22 @@ import React, { useState } from 'react';
 import { KeysPanel } from './KeysPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { AiProviderSettings } from './AiProviderSettings';
+import { OrchestrationSettingsPanel } from './OrchestrationSettingsPanel';
 import {
-    Lock, Database, Bot,
+    Lock, Database, Bot, SlidersHorizontal,
 } from 'lucide-react';
 
 interface SettingsPanelProps {
     projectId: string;
 }
 
-type SettingsTab = 'secrets' | 'databases' | 'ai';
+type SettingsTab = 'secrets' | 'databases' | 'ai' | 'limits';
 
 const TAB_CONFIG: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
     { id: 'secrets', label: 'Keys & Secrets', icon: Lock },
     { id: 'databases', label: 'Databases', icon: Database },
     { id: 'ai', label: 'AI Provider', icon: Bot },
+    { id: 'limits', label: 'Limits & Budget', icon: SlidersHorizontal },
 ];
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ projectId }) => {
@@ -57,6 +59,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ projectId }) => {
                 )}
                 {activeTab === 'ai' && (
                     <AiProviderSettings projectId={projectId} />
+                )}
+                {activeTab === 'limits' && (
+                    <OrchestrationSettingsPanel projectId={projectId} />
                 )}
             </div>
         </div>

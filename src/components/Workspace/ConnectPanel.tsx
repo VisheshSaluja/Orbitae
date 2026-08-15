@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DatabasePanel } from './DatabasePanel';
+import { OrchestrationSettingsPanel } from './OrchestrationSettingsPanel';
 import { ErrorBoundary } from '../ui/error-boundary';
 import { invokeCommand } from '../../lib/tauri';
 import { toast } from 'sonner';
 import type { ProjectEnv } from '../../types';
 import {
-    Database, Variable, Plus, Trash2, Save,
+    Database, Variable, Plus, Trash2, Save, SlidersHorizontal,
     type LucideIcon,
 } from 'lucide-react';
 
@@ -14,7 +15,7 @@ interface ConnectPanelProps {
     projectPath: string;
 }
 
-type Section = 'databases' | 'envVars';
+type Section = 'databases' | 'envVars' | 'limits';
 
 interface SubTab {
     id: Section;
@@ -25,6 +26,7 @@ interface SubTab {
 const SUB_TABS: SubTab[] = [
     { id: 'databases', label: 'Databases', icon: Database },
     { id: 'envVars', label: 'Environment', icon: Variable },
+    { id: 'limits', label: 'Limits & Budget', icon: SlidersHorizontal },
 ];
 
 export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
@@ -102,6 +104,12 @@ export const ConnectPanel: React.FC<ConnectPanelProps> = ({ projectId }) => {
                 {activeSection === 'databases' && (
                     <ErrorBoundary>
                         <DatabasePanel projectId={projectId} />
+                    </ErrorBoundary>
+                )}
+
+                {activeSection === 'limits' && (
+                    <ErrorBoundary>
+                        <OrchestrationSettingsPanel projectId={projectId} />
                     </ErrorBoundary>
                 )}
 
