@@ -18,7 +18,8 @@ use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::sqlite_store::{
-    delete_session, list_plan_summaries, load_session, save_execution, PlanSummary, SqliteStore,
+    delete_session, get_base_tree, list_plan_summaries, load_session, save_base_tree,
+    save_execution, PlanSummary, SqliteStore,
 };
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
@@ -235,6 +236,18 @@ pub async fn orchestrator_execute(
         .map_err(|e| format!("task join: {e}"))??
     };
 
+    // 1.5 Snapshot the pre-execution tree so validation can diff ONLY what this
+    //     run produces (new files included, pre-existing WIP excluded). Best
+    //     effort — a missing baseline just falls back to `git diff HEAD`.
+    let snap_cwd = config.cwd.clone();
+    let base_tree = tokio::task::spawn_blocking(move || super::validation::snapshot_tree(&snap_cwd))
+        .await
+        .ok()
+        .flatten();
+    if let Some(base) = base_tree.as_deref() {
+        let _ = save_base_tree(pool.inner(), &session_id, base).await;
+    }
+
     // 2. Run the long execution WITHOUT holding the session lock, so reads
     //    (reopening the plan, polling) never block while it runs for minutes.
     //    Accumulate the log alongside streaming it, so a finished plan can be
@@ -317,6 +330,10 @@ pub async fn orchestrator_validate(
         .and_then(|l| l.plan.map(|p| p.goal))
         .unwrap_or_else(|| "the recent change".to_string());
 
+    // The baseline snapshot captured when execution started (if any) — lets the
+    // review diff only what the run produced.
+    let base_tree = get_base_tree(pool.inner(), &session_id).await.ok().flatten();
+
     let cwd = crate::shared::utils::expand_path(&project_path);
     tokio::task::spawn_blocking(move || -> Result<super::validation::ValidationReport, String> {
         let config = SessionConfig {
@@ -324,8 +341,15 @@ pub async fn orchestrator_validate(
             model: Some("sonnet".to_string()),
             permission_mode: TaskPermissionMode::AcceptEdits,
         };
-        super::validation::run_validation(&ClaudeBackend, &config, &cwd, &intent, &settings)
-            .map_err(|e| e.to_string())
+        super::validation::run_validation(
+            &ClaudeBackend,
+            &config,
+            &cwd,
+            &intent,
+            base_tree.as_deref(),
+            &settings,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("task join: {e}"))?

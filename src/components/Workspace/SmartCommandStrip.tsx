@@ -124,12 +124,10 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                     setQuery('');
                     break;
 
+                // For anything complex, always plan the USER'S actual query —
+                // never a canned route template (that legacy behavior threw the
+                // real request away and planned the wrong thing).
                 case 'orchestrate':
-                    setQuery('');
-                    setResult(null);
-                    onSpawnTask(response.suggested_prompt, useGsd);
-                    break;
-
                 case 'fallback':
                     setQuery('');
                     setResult(null);

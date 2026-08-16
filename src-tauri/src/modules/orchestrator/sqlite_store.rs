@@ -274,6 +274,28 @@ pub async fn save_execution(
         .map_err(|e| OrchestratorError::Database(e.to_string()))
 }
 
+/// Record the pre-execution working-tree snapshot (a git tree SHA) so validation
+/// can diff only what the run produced.
+pub async fn save_base_tree(pool: &SqlitePool, session_id: &str, tree: &str) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET base_tree = ? WHERE id = ?")
+        .bind(tree)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
+/// Read the pre-execution snapshot for a session, if one was captured.
+pub async fn get_base_tree(pool: &SqlitePool, session_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT base_tree FROM orch_sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(row.and_then(|r| r.get::<Option<String>, _>("base_tree")))
+}
+
 /// Mark plans left `executing` as `errored` — their run died with the app.
 pub async fn reconcile_executing(pool: &SqlitePool) -> Result<u64> {
     let r = sqlx::query("UPDATE orch_sessions SET status = 'errored' WHERE status = 'executing'")

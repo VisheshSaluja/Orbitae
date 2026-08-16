@@ -83,6 +83,11 @@ fn build_step_prompt(goal: &str, prior: &[String], step: &PlanStep) -> String {
          Overall goal: {goal}\n\n\
          Completed so far:\n{prior_block}\n\n\
          YOUR STEP: {title}\n{detail}{files}\n\n\
+         Do NOT start long-running or blocking processes (dev servers, watchers, \
+         `http.server`, `npm run dev`, `tail -f`) — they never return and stall \
+         the run. If this step is verification, use a quick non-blocking check \
+         (build/compile/typecheck/lint) or inspect the files directly; never \
+         launch a server or open a browser.\n\n\
          Do the work now. When finished, reply with a one-line summary of what you changed.",
         title = step.title,
         detail = step.detail_md,

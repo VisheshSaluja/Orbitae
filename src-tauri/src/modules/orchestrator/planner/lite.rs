@@ -70,7 +70,12 @@ fn build_plan_prompt(task: &str) -> String {
          Output ONLY a JSON object (optionally in a ```json fence) with this exact shape:\n\
          {SCHEMA_BLOCK}\n\n\
          Rules:\n\
-         - Be lean: the fewest steps that fully accomplish the task, no filler.\n\
+         - Match the plan's size to the task's size. A small, well-scoped task \
+         is 1–3 tight steps. Do NOT add standalone \"investigate\", \"confirm\", \
+         \"audit\", or \"verify\" steps for small tasks — fold any lookup the \
+         work needs into the implementation step itself. Reserve multi-step, \
+         investigation-heavy plans for genuinely large or risky work.\n\
+         - Prefer the laziest approach that fully works; don't over-engineer.\n\
          - Order steps by dependency.\n\
          - Set \"model\" per step by difficulty: haiku for mechanical work, \
          sonnet for normal, opus for hard reasoning.\n\

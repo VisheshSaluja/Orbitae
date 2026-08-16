@@ -6,10 +6,11 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
-    ShieldCheck, AlertTriangle, XCircle, GitPullRequest, ExternalLink,
+    ShieldCheck, GitPullRequest, ExternalLink,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
-import type { SessionView, Plan, PlanStep, ValidationReport, RiskLevel } from '../../lib/orchestrator';
+import type { SessionView, Plan, PlanStep, ValidationReport, Finding } from '../../lib/orchestrator';
+import { DiffReview } from './DiffReview';
 
 interface PlanReviewPanelProps {
     projectId: string;
@@ -79,6 +80,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const [report, setReport] = useState<ValidationReport | null>(null);
     const [prBusy, setPrBusy] = useState(false);
     const [prResult, setPrResult] = useState<orch.PrResult | null>(null);
+    const [findingQna, setFindingQna] = useState<{ title: string; answer: string } | null>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
@@ -222,6 +224,22 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         }
     };
 
+    const askAboutFinding = async (f: Finding) => {
+        if (!sessionId) return;
+        setBusy('Ask');
+        setFindingQna(null);
+        try {
+            const q = `About the review finding "${f.title}"${f.file ? ` in ${f.file}` : ''}: ${f.detail}\n\n` +
+                `Is this a real problem in the change you just made? If yes, give the smallest concrete fix. If not, explain why it's a false alarm. Be brief.`;
+            const answer = await orch.ask(sessionId, q, null);
+            setFindingQna({ title: f.title, answer });
+        } catch (e) {
+            toast.error(`Question failed: ${e}`);
+        } finally {
+            setBusy(null);
+        }
+    };
+
     const doCreatePr = async () => {
         if (!plan) return;
         setPrBusy(true);
@@ -323,7 +341,17 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                 {session?.status === 'done' && (
                     report ? (
                         <>
-                            <ValidationView report={report} onRerun={runValidation} busy={validating} />
+                            <DiffReview report={report} onRerun={runValidation} busy={validating} onAsk={askAboutFinding} />
+                            {findingQna && (
+                                <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                        <MessageCircleQuestion className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                        <span className="text-[12px] font-medium text-foreground flex-1 min-w-0 truncate">{findingQna.title}</span>
+                                        <button onClick={() => setFindingQna(null)} className="text-muted-foreground/50 hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+                                    </div>
+                                    <Markdown>{findingQna.answer}</Markdown>
+                                </div>
+                            )}
                             {prResult ? (
                                 <PrResultCard result={prResult} />
                             ) : (
@@ -507,97 +535,6 @@ const PrResultCard: React.FC<{ result: orch.PrResult }> = ({ result }) => {
                     {result.pr_url ? 'View pull request' : 'Open a pull request'}
                 </a>
             )}
-        </div>
-    );
-};
-
-const RISK_STYLES: Record<RiskLevel, { label: string; cls: string }> = {
-    low: { label: 'Low risk — safe to merge', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
-    medium: { label: 'Medium risk — worth a look', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
-    high: { label: 'High risk — review the diff', cls: 'bg-red-500/10 text-red-400 border-red-500/30' },
-};
-
-const ValidationView: React.FC<{ report: ValidationReport; onRerun: () => void; busy: boolean }> = ({ report, onRerun, busy }) => {
-    const escalations = report.findings.filter((f) => f.action === 'escalate');
-    const risk = RISK_STYLES[report.risk_level];
-    return (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-[12px] font-semibold text-foreground">Review</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${risk.cls}`}
-                    title={report.risk_reasons.join(' · ')}>
-                    {risk.label}
-                </span>
-                <div className="flex-1" />
-                <button onClick={onRerun} disabled={busy} className="p-1 rounded text-muted-foreground/40 hover:text-foreground hover:bg-foreground/6 disabled:opacity-40" title="Re-run review">
-                    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                </button>
-            </div>
-            <div className="px-4 py-3 space-y-3">
-                {/* Why this risk level — the reasons, not a mystery number */}
-                {report.risk_reasons.length > 0 && (
-                    <div className="text-[11px] text-muted-foreground">
-                        {report.risk_reasons.join(' · ')}
-                    </div>
-                )}
-                {/* Deterministic checks */}
-                <div className="space-y-1">
-                    {report.checks.map((c) => (
-                        <div key={c.name} className="flex items-start gap-2 text-[12px]">
-                            {c.passed
-                                ? <Check className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
-                                : <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />}
-                            <span className="font-medium text-foreground/90 w-20 shrink-0">{c.name}</span>
-                            <span className={c.passed ? 'text-emerald-400/70' : 'text-red-400/80 font-mono text-[11px] whitespace-pre-wrap break-words'}>
-                                {c.passed ? 'passed' : (c.output || 'failed')}
-                            </span>
-                        </div>
-                    ))}
-                    {report.checks.length === 0 && (
-                        <span className="text-[11px] text-muted-foreground/50">No deterministic checks detected for this project.</span>
-                    )}
-                </div>
-
-                {/* Escalations — the judgment calls you review */}
-                {escalations.length > 0 && (
-                    <div className="space-y-1.5">
-                        <span className="text-[11px] font-medium text-amber-400/80">{escalations.length} to review</span>
-                        {escalations.map((f, i) => {
-                            const isError = f.severity === 'error';
-                            return (
-                                <div key={i} className={`rounded-lg border p-2.5 ${isError ? 'border-red-500/25 bg-red-500/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
-                                    <div className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
-                                        {isError
-                                            ? <XCircle className="w-3 h-3 text-red-400 shrink-0" />
-                                            : <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />}
-                                        {f.title}
-                                        <span className={`text-[9px] px-1 py-0.5 rounded uppercase font-semibold ${isError ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>{f.severity}</span>
-                                    </div>
-                                    <div className="text-[11px] text-muted-foreground mt-1">{f.detail}</div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-
-                {report.auto_fixed.length > 0 && (
-                    <div className="space-y-1">
-                        <span className="text-[11px] font-medium text-emerald-400/80">{report.auto_fixed.length} auto-fixed</span>
-                        {report.auto_fixed.map((t, i) => (
-                            <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                <Check className="w-3 h-3 text-emerald-400 shrink-0" /> {t}
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {escalations.length === 0 && report.checks.every((c) => c.passed) && (
-                    <div className="text-[12px] text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Nothing flagged — clean.
-                    </div>
-                )}
-            </div>
         </div>
     );
 };

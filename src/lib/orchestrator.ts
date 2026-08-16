@@ -84,6 +84,10 @@ export interface Finding {
     detail: string;
     severity: 'error' | 'warning';
     action: 'auto_fix' | 'escalate';
+    /** File the finding is about — used to pin it to the diff. */
+    file: string | null;
+    /** Verbatim one-line snippet from the diff to anchor the finding to. */
+    anchor: string | null;
 }
 
 export interface ValidationReport {
@@ -95,6 +99,8 @@ export interface ValidationReport {
     /** The objective reasons the risk level was assigned (explainable, not a number). */
     risk_reasons: string[];
     summary: string;
+    /** The reviewed diff, for rendering findings anchored to the code. */
+    diff: string;
 }
 
 /** Run the bounded validation pass (checks + gated adversarial review + auto-fix). */
