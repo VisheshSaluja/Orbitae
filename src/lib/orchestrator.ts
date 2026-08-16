@@ -116,6 +116,19 @@ export function validate(
     });
 }
 
+/** A human review comment to apply to the diff (a line annotation). */
+export interface ReviewComment {
+    file: string | null;
+    /** A code snippet from the diff line the comment is anchored to. */
+    code: string | null;
+    comment: string;
+}
+
+/** Apply a batch of human review comments to the working tree via an agent. */
+export function applyReviewComments(projectPath: string, comments: ReviewComment[]): Promise<string> {
+    return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, comments });
+}
+
 export interface PrResult {
     branch: string;
     committed: boolean;

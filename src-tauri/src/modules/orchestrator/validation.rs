@@ -101,34 +101,88 @@ const DIFF_VIEW_CAP: usize = 120_000;
 /// prompt tells the reviewer to prioritize.
 const MAX_FINDINGS: usize = 12;
 
-/// A deterministic check to run: a display name and a shell-free command.
+/// A deterministic check to run: a display name, a shell-free command, and the
+/// directory to run it in (repo root, or a monorepo subproject).
 struct CheckSpec {
     name: &'static str,
     program: &'static str,
     args: &'static [&'static str],
+    dir: std::path::PathBuf,
 }
 
-/// Detect the fast, deterministic checks appropriate for a project.
-fn detect_checks(cwd: &str) -> Vec<CheckSpec> {
+/// Is a CLI tool available on PATH? (Avoids reporting "could not run X" as a
+/// failed check when the tool simply isn't installed.)
+fn tool_exists(program: &str) -> bool {
+    Command::new(program).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// The new-side file paths a unified diff touches (`+++ b/<path>`).
+fn changed_paths(diff: &str) -> Vec<String> {
+    diff.lines()
+        .filter_map(|l| l.strip_prefix("+++ b/"))
+        .map(|p| p.trim().to_string())
+        .collect()
+}
+
+/// Detect the fast, deterministic checks appropriate for a project. Scans the
+/// repo root AND immediate subdirectories (monorepo `backend/` + `frontend/`
+/// splits), but only runs a subproject's checks if the change actually touched
+/// it — so unrelated pre-existing errors elsewhere can't produce false failures.
+fn detect_checks(cwd: &str, changed: &[String]) -> Vec<CheckSpec> {
     let root = Path::new(cwd);
-    let mut specs = Vec::new();
-    if root.join("Cargo.toml").exists() {
-        specs.push(CheckSpec { name: "build", program: "cargo", args: &["check", "--quiet"] });
-        specs.push(CheckSpec { name: "lint", program: "cargo", args: &["clippy", "--quiet"] });
+    let mut candidates: Vec<(String, std::path::PathBuf)> = vec![(String::new(), root.to_path_buf())];
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.')
+                || matches!(name.as_str(), "node_modules" | "target" | "venv" | "dist" | "build")
+            {
+                continue;
+            }
+            candidates.push((name, p));
+        }
     }
-    if root.join("package.json").exists() {
-        // Type-check is the cheapest, most valuable JS/TS signal.
-        specs.push(CheckSpec { name: "typecheck", program: "npx", args: &["tsc", "--noEmit"] });
+
+    let mut specs = Vec::new();
+    for (rel, dir) in candidates {
+        let touched =
+            rel.is_empty() || changed.iter().any(|p| p.starts_with(&format!("{rel}/")));
+        if !touched {
+            continue;
+        }
+        if dir.join("Cargo.toml").exists() {
+            specs.push(CheckSpec { name: "build", program: "cargo", args: &["check", "--quiet"], dir: dir.clone() });
+            specs.push(CheckSpec { name: "lint", program: "cargo", args: &["clippy", "--quiet"], dir: dir.clone() });
+        }
+        if dir.join("package.json").exists() {
+            specs.push(CheckSpec { name: "typecheck", program: "npx", args: &["tsc", "--noEmit"], dir: dir.clone() });
+        }
+        let is_python = dir.join("pyproject.toml").exists()
+            || dir.join("requirements.txt").exists()
+            || dir.join("setup.py").exists();
+        if is_python && tool_exists("python3") {
+            // compileall is the cheap "does it even parse/compile" evidence.
+            specs.push(CheckSpec {
+                name: "compile",
+                program: "python3",
+                args: &["-m", "compileall", "-q", "-x", r"(\.venv|venv|node_modules|\.git|migrations)", "."],
+                dir: dir.clone(),
+            });
+        }
     }
     specs
 }
 
 /// Run the detected deterministic checks, capturing pass/fail + output evidence.
-fn run_checks(cwd: &str) -> Vec<Check> {
-    detect_checks(cwd)
+fn run_checks(cwd: &str, changed: &[String]) -> Vec<Check> {
+    detect_checks(cwd, changed)
         .into_iter()
         .map(|spec| {
-            let out = Command::new(spec.program).args(spec.args).current_dir(cwd).output();
+            let out = Command::new(spec.program).args(spec.args).current_dir(&spec.dir).output();
             match out {
                 Ok(o) => {
                     let mut text = String::from_utf8_lossy(&o.stderr).to_string();
@@ -302,6 +356,56 @@ fn apply_autofixes(
     Ok(())
 }
 
+/// A human review comment to apply: the file, a code anchor from the diff, and
+/// the developer's ask. Anchors are best-effort (the agent locates them).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReviewComment {
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    pub comment: String,
+}
+
+/// Apply a batch of human review comments via a focused agent pass — edits only
+/// what the comments ask for, nothing else. A fresh agent in the project cwd
+/// (like the autofix pass). Returns the agent's one-line summary.
+pub fn apply_review_comments(
+    backend: &dyn AgentBackend,
+    config: &SessionConfig,
+    comments: &[ReviewComment],
+) -> Result<String> {
+    let list = comments
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let loc = match (&c.file, c.code.as_deref().map(str::trim).filter(|s| !s.is_empty())) {
+                (Some(f), Some(code)) => format!("in {f}, at `{code}`"),
+                (Some(f), _) => format!("in {f}"),
+                _ => "in the change".to_string(),
+            };
+            format!("{}. {loc}: {}", i + 1, c.comment.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = format!(
+        "Apply ONLY these specific review comments to the code. Make each requested \
+         change in place and nothing else — do not refactor or touch anything not \
+         listed.\n\n{list}\n\nApply them now, then reply with a one-line summary of \
+         what you changed."
+    );
+    let convo = Conversation::start(backend, config.clone())?;
+    let out = convo.ask(&prompt)?;
+    let _ = convo.stop();
+    if out.is_error {
+        return Err(super::error::OrchestratorError::Backend(format!(
+            "applying comments failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(out.text)
+}
+
 /// Assess risk **categorically** from objective conditions, returning the level
 /// and the concrete reasons for it. No weighted numbers: each tier maps to a
 /// verifiable fact, so the assessment is explainable and defensible.
@@ -352,8 +456,9 @@ pub fn run_validation(
     base_tree: Option<&str>,
     settings: &OrchestrationSettings,
 ) -> Result<ValidationReport> {
-    let mut checks = run_checks(cwd);
     let diff = working_diff(cwd, base_tree);
+    let changed = changed_paths(&diff);
+    let mut checks = run_checks(cwd, &changed);
 
     // The review runs when validation is on and there's an actual change to
     // judge. Cost is bounded (one pass, capped diff, the budget) — no arbitrary
@@ -386,7 +491,7 @@ pub fn run_validation(
         drop(fixable);
         if applied.is_ok() {
             auto_fixed = fixable_titles;
-            checks = run_checks(cwd); // re-verify after the edits
+            checks = run_checks(cwd, &changed); // re-verify after the edits
             findings.retain(|f| f.action != FindingAction::AutoFix);
         }
     }
@@ -458,6 +563,16 @@ mod tests {
         assert_eq!(fs[1].severity, Severity::Warning);
         assert_eq!(fs[1].action, FindingAction::AutoFix);
         assert_eq!(fs[1].file, None); // absent → None, not empty string
+    }
+
+    #[test]
+    fn changed_paths_reads_new_side_files() {
+        let diff = "diff --git a/backend/app/main.py b/backend/app/main.py\n\
+                    --- a/backend/app/main.py\n+++ b/backend/app/main.py\n@@ -1 +1 @@\n+x\n\
+                    diff --git a/public/index.html b/public/index.html\n\
+                    --- /dev/null\n+++ b/public/index.html\n@@ -0,0 +1 @@\n+y\n";
+        let c = changed_paths(diff);
+        assert_eq!(c, vec!["backend/app/main.py", "public/index.html"]);
     }
 
     #[test]

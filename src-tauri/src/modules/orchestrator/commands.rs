@@ -355,6 +355,32 @@ pub async fn orchestrator_validate(
     .map_err(|e| format!("task join: {e}"))?
 }
 
+/// Apply a batch of human review comments (line annotations) to the working
+/// tree via a focused agent pass. The frontend re-runs validation afterward.
+#[command]
+pub async fn orchestrator_apply_review_comments(
+    project_path: String,
+    comments: Vec<super::validation::ReviewComment>,
+) -> Result<String, String> {
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    if comments.is_empty() {
+        return Err("no comments to apply".into());
+    }
+
+    let cwd = crate::shared::utils::expand_path(&project_path);
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let config = SessionConfig {
+            cwd: cwd.clone(),
+            model: Some("sonnet".to_string()),
+            permission_mode: TaskPermissionMode::AcceptEdits,
+        };
+        super::validation::apply_review_comments(&ClaudeBackend, &config, &comments)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
 /// Commit the validated change under the developer's identity and open a PR
 /// (never merges — the human is the merge gate).
 #[command]

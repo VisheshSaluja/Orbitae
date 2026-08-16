@@ -6,11 +6,12 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
-    ShieldCheck, GitPullRequest, ExternalLink,
+    ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
 import type { SessionView, Plan, PlanStep, ValidationReport, Finding } from '../../lib/orchestrator';
 import { DiffReview } from './DiffReview';
+import { AnnotationOverlay } from './AnnotationOverlay';
 
 interface PlanReviewPanelProps {
     projectId: string;
@@ -23,6 +24,15 @@ interface PlanReviewPanelProps {
     model?: string | null;
     onClose: () => void;
     onConfirmed?: (session: SessionView) => void;
+}
+
+/** A developer comment pinned to a highlighted phrase in a plan step. */
+interface PlanNote {
+    id: string;
+    stepId: string;
+    stepTitle: string;
+    quote: string;
+    comment: string;
 }
 
 const MODEL_COLORS: Record<string, string> = {
@@ -81,6 +91,12 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const [prBusy, setPrBusy] = useState(false);
     const [prResult, setPrResult] = useState<orch.PrResult | null>(null);
     const [findingQna, setFindingQna] = useState<{ title: string; answer: string } | null>(null);
+    const [applyingComments, setApplyingComments] = useState(false);
+
+    // Plan annotations: highlight text anywhere in the plan → pin a comment → batch-revise.
+    const [planNotes, setPlanNotes] = useState<PlanNote[]>([]);
+    const noteIdc = useRef(0);
+    const bodyRef = useRef<HTMLDivElement>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
@@ -224,6 +240,39 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         }
     };
 
+    const applyComments = async (comments: orch.ReviewComment[]) => {
+        if (!projectPath) return;
+        setApplyingComments(true);
+        try {
+            await orch.applyReviewComments(projectPath, comments);
+            toast.success('Comments applied — re-reviewing');
+            await runValidation();
+        } catch (e) {
+            toast.error(`Apply failed: ${e}`);
+        } finally {
+            setApplyingComments(false);
+        }
+    };
+
+    // A comment dropped on a highlighted phrase, resolved to its step.
+    const handlePlanComment = ({ quote, target, comment }: { quote: string; target: HTMLElement | null; comment: string }) => {
+        const el = target?.closest('[data-annot-step]') as HTMLElement | null;
+        setPlanNotes((ns) => [...ns, {
+            id: `n${noteIdc.current++}`,
+            stepId: el?.getAttribute('data-annot-step') ?? '',
+            stepTitle: el?.getAttribute('data-annot-title') ?? 'the plan',
+            quote, comment,
+        }]);
+    };
+
+    const reviseWithNotes = () => {
+        if (!sessionId || planNotes.length === 0) return;
+        const feedback = 'Address these specific comments on the plan. Keep everything else exactly as-is:\n' +
+            planNotes.map((n) => `- On step "${n.stepTitle}", regarding "${n.quote}": ${n.comment}`).join('\n');
+        run('Revise', () => orch.revise(sessionId, feedback));
+        setPlanNotes([]);
+    };
+
     const askAboutFinding = async (f: Finding) => {
         if (!sessionId) return;
         setBusy('Ask');
@@ -285,6 +334,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
     return (
         <div className="flex flex-col h-full max-w-3xl mx-auto w-full">
+            <AnnotationOverlay containerRef={bodyRef} scopeAttr="data-annot-step" onSubmit={handlePlanComment} />
             {/* Header */}
             <div className="flex items-start gap-3 px-4 sm:px-6 py-4 border-b border-border/60">
                 <div className="flex-1 min-w-0">
@@ -304,7 +354,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto hide-scrollbar px-4 sm:px-6 py-4 space-y-4">
+            <div ref={bodyRef} className="flex-1 overflow-y-auto hide-scrollbar px-4 sm:px-6 py-4 space-y-4">
                 {(executing || execLog.length > 0) && (
                     <div className="rounded-xl border border-zinc-800 bg-[#0c0c0e] overflow-hidden">
                         <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
@@ -341,7 +391,8 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                 {session?.status === 'done' && (
                     report ? (
                         <>
-                            <DiffReview report={report} onRerun={runValidation} busy={validating} onAsk={askAboutFinding} />
+                            <DiffReview report={report} onRerun={runValidation} busy={validating} onAsk={askAboutFinding}
+                                onApplyComments={applyComments} applying={applyingComments} />
                             {findingQna && (
                                 <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-1.5">
                                     <div className="flex items-center gap-2">
@@ -380,13 +431,32 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                 )}
 
                 {plan.summary_md.trim() && (
-                    <div className="rounded-xl border border-border/50 bg-card/50 p-4">
+                    <div data-annot-step="__summary__" data-annot-title="Plan summary"
+                        className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
                         <Markdown>{plan.summary_md}</Markdown>
+                        {planNotes.filter((n) => !plan.steps.some((s) => s.id === n.stepId)).map((n) => (
+                            <div key={n.id} className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5 space-y-1">
+                                <div className="text-[10px] text-muted-foreground/70 border-l-2 border-sky-500/40 pl-2 italic line-clamp-2">“{n.quote}”</div>
+                                <div className="flex items-start gap-1.5">
+                                    <MessageSquarePlus className="w-3 h-3 text-sky-400 mt-0.5 shrink-0" />
+                                    <span className="text-[11px] text-foreground/85 flex-1 min-w-0">{n.comment}</span>
+                                    <button onClick={() => setPlanNotes((ns) => ns.filter((x) => x.id !== n.id))}
+                                        className="text-muted-foreground/50 hover:text-red-400 shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
 
+                {plan.status !== 'confirmed' && plan.steps.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground/50 px-1 flex items-center gap-1">
+                        <MessageSquarePlus className="w-3 h-3" /> Highlight any text in the plan to comment on it.
+                    </p>
+                )}
+
                 {plan.steps.map((step, i) => (
-                    <div key={step.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                    <div key={step.id} data-annot-step={step.id} data-annot-title={step.title}
+                        className="rounded-xl border border-border bg-card overflow-hidden">
                         {/* Step header */}
                         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50">
                             <StatusDot status={step.status} />
@@ -447,6 +517,19 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                                         </div>
                                     )}
 
+                                    {/* Pinned comments on this step. */}
+                                    {planNotes.filter((n) => n.stepId === step.id).map((n) => (
+                                        <div key={n.id} className="rounded-lg border border-sky-500/25 bg-sky-500/5 p-2.5 space-y-1">
+                                            <div className="text-[10px] text-muted-foreground/70 border-l-2 border-sky-500/40 pl-2 italic line-clamp-2">“{n.quote}”</div>
+                                            <div className="flex items-start gap-1.5">
+                                                <MessageSquarePlus className="w-3 h-3 text-sky-400 mt-0.5 shrink-0" />
+                                                <span className="text-[11px] text-foreground/85 flex-1 min-w-0">{n.comment}</span>
+                                                <button onClick={() => setPlanNotes((ns) => ns.filter((x) => x.id !== n.id))}
+                                                    className="text-muted-foreground/50 hover:text-red-400 shrink-0"><Trash2 className="w-3 h-3" /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+
                                     {/* Step actions */}
                                     <div className="flex items-center gap-1.5 pt-1">
                                         <StepAction icon={Pencil} label="Edit" onClick={() => startEdit(step)} />
@@ -468,6 +551,13 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
             {/* Footer: revise + confirm */}
             <div className="border-t border-border/60 px-4 sm:px-6 py-3 space-y-2">
+                {planNotes.length > 0 && (
+                    <button onClick={reviseWithNotes} disabled={!!busy}
+                        className="w-full flex items-center justify-center gap-2 rounded-lg bg-sky-500/90 text-white px-3 py-2 text-[12px] font-medium hover:bg-sky-500 disabled:opacity-40">
+                        {busy === 'Revise' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquarePlus className="w-3.5 h-3.5" />}
+                        Revise with {planNotes.length} comment{planNotes.length > 1 ? 's' : ''}
+                    </button>
+                )}
                 <div className="flex gap-2">
                     <input value={feedback} onChange={(e) => setFeedback(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && submitRevise()}
