@@ -88,7 +88,10 @@ fn build_step_prompt(goal: &str, prior: &[String], step: &PlanStep) -> String {
          the run. If this step is verification, use a quick non-blocking check \
          (build/compile/typecheck/lint) or inspect the files directly; never \
          launch a server or open a browser.\n\n\
-         Do the work now. When finished, reply with a one-line summary of what you changed.",
+         Do the work now. When finished, reply with ONLY a single line naming \
+         what you changed (e.g. \"Added static mount in main.py\") — no preamble, \
+         no \"Perfect\"/\"Let me\"/\"You're right\", no restating the plan, no \
+         status claims like \"verified\" or \"tests pass\".",
         title = step.title,
         detail = step.detail_md,
     )

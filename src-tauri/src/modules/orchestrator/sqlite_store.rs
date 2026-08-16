@@ -296,6 +296,30 @@ pub async fn get_base_tree(pool: &SqlitePool, session_id: &str) -> Result<Option
     Ok(row.and_then(|r| r.get::<Option<String>, _>("base_tree")))
 }
 
+/// Persist the developer's pending plan annotations (opaque JSON) on a session.
+pub async fn save_annotations(pool: &SqlitePool, session_id: &str, annotations: &str) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET annotations = ? WHERE id = ?")
+        .bind(annotations)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
+/// Read the pending plan annotations for a session (`"[]"` when none).
+pub async fn get_annotations(pool: &SqlitePool, session_id: &str) -> Result<String> {
+    let row = sqlx::query("SELECT annotations FROM orch_sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(row
+        .and_then(|r| r.get::<Option<String>, _>("annotations"))
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "[]".to_string()))
+}
+
 /// Mark plans left `executing` as `errored` — their run died with the app.
 pub async fn reconcile_executing(pool: &SqlitePool) -> Result<u64> {
     let r = sqlx::query("UPDATE orch_sessions SET status = 'errored' WHERE status = 'executing'")

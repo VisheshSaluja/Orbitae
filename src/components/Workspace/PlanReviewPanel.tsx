@@ -5,13 +5,14 @@ import { toast } from 'sonner';
 import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
-    RotateCcw, X, Play, Lock, Send, ChevronRight, Terminal, CheckCircle2,
+    RotateCcw, X, Play, Lock, Send, ChevronRight, ChevronDown, Terminal, CheckCircle2,
     ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
-import type { SessionView, Plan, PlanStep, ValidationReport, Finding } from '../../lib/orchestrator';
+import type { SessionView, Plan, PlanStep, ValidationReport, Finding, ExecutionResult } from '../../lib/orchestrator';
 import { DiffReview } from './DiffReview';
 import { AnnotationOverlay } from './AnnotationOverlay';
+import { ResultCard } from './ResultCard';
 
 interface PlanReviewPanelProps {
     projectId: string;
@@ -82,8 +83,10 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
     // Execution
     const [execLog, setExecLog] = useState<string[]>([]);
-    const [execResult, setExecResult] = useState<string | null>(null);
+    const [execResult, setExecResult] = useState<ExecutionResult | null>(null);
+    const [legacyResult, setLegacyResult] = useState<string | null>(null); // pre-structured sessions
     const [executing, setExecuting] = useState(false);
+    const [logOpen, setLogOpen] = useState(false);
 
     // Validation (Review & Ship)
     const [validating, setValidating] = useState(false);
@@ -97,8 +100,24 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const [planNotes, setPlanNotes] = useState<PlanNote[]>([]);
     const noteIdc = useRef(0);
     const bodyRef = useRef<HTMLDivElement>(null);
+    const notesHydrated = useRef(false); // don't persist until we've loaded
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
+
+    // The result channel/persistence now carries a structured ExecutionResult as
+    // JSON. Parse it; fall back to raw text for pre-structured sessions.
+    const applyResultPayload = useCallback((payload: string) => {
+        try {
+            const r = JSON.parse(payload);
+            if (r && typeof r === 'object' && 'outcome' in r && 'stats' in r) {
+                setExecResult(r as ExecutionResult);
+                setLegacyResult(null);
+                return;
+            }
+        } catch { /* not JSON — legacy narration */ }
+        setLegacyResult(payload);
+        setExecResult(null);
+    }, []);
 
     // Begin a new session, or reopen an existing one, on mount.
     useEffect(() => {
@@ -118,7 +137,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     useEffect(() => {
         if (!reopenId || !session) return;
         if (session.log) setExecLog(session.log.split('\n'));
-        if (session.result) setExecResult(session.result);
+        if (session.result) applyResultPayload(session.result);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reopenId, session?.session_id]);
 
@@ -133,7 +152,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
             setExecLog((prev) => [...prev, e.payload]);
         }).then((fn) => { unlistenP = fn; });
         listen<string>(`orchestrator-result-${sid}`, (e) => {
-            setExecResult(e.payload);
+            applyResultPayload(e.payload);
             setExecuting(false);
             orch.loadPlan(sid).then(setSession).catch(() => {});
         }).then((fn) => { unlistenR = fn; });
@@ -143,6 +162,27 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const sessionId = session?.session_id;
     const plan: Plan | null = session?.plan ?? null;
     const allApproved = !!plan && plan.steps.length > 0 && plan.steps.every((s) => s.status === 'approved');
+
+    // Hydrate pending plan annotations once the session id is known, then persist
+    // on every change so they survive closing/reopening the plan.
+    useEffect(() => {
+        if (!sessionId) return;
+        notesHydrated.current = false;
+        orch.getAnnotations(sessionId)
+            .then((json) => {
+                try {
+                    const parsed = JSON.parse(json);
+                    if (Array.isArray(parsed)) setPlanNotes(parsed as PlanNote[]);
+                } catch { /* ignore malformed */ }
+            })
+            .catch(() => {})
+            .finally(() => { notesHydrated.current = true; });
+    }, [sessionId]);
+
+    useEffect(() => {
+        if (!sessionId || !notesHydrated.current) return;
+        orch.saveAnnotations(sessionId, JSON.stringify(planNotes)).catch(() => {});
+    }, [planNotes, sessionId]);
 
     const run = useCallback(async (label: string, fn: () => Promise<SessionView>) => {
         setBusy(label);
@@ -192,11 +232,12 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         setExecuting(true);
         setExecLog([]);
         setExecResult(null);
+        setLegacyResult(null);
         const unlistenProgress = await listen<string>(`orchestrator-progress-${sid}`, (e) => {
             setExecLog((prev) => [...prev, e.payload]);
         });
         const unlistenResult = await listen<string>(`orchestrator-result-${sid}`, (e) => {
-            setExecResult(e.payload);
+            applyResultPayload(e.payload);
         });
         try {
             const v = await orch.execute(sid);
@@ -244,7 +285,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!projectPath) return;
         setApplyingComments(true);
         try {
-            await orch.applyReviewComments(projectPath, comments);
+            await orch.applyReviewComments(projectPath, comments, plan?.goal);
             toast.success('Comments applied — re-reviewing');
             await runValidation();
         } catch (e) {
@@ -355,35 +396,48 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 
             {/* Scrollable body */}
             <div ref={bodyRef} className="flex-1 overflow-y-auto hide-scrollbar px-4 sm:px-6 py-4 space-y-4">
-                {(executing || execLog.length > 0) && (
-                    <div className="rounded-xl border border-zinc-800 bg-[#0c0c0e] overflow-hidden">
-                        <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
-                            {executing
-                                ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                                : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-                            <Terminal className="w-3.5 h-3.5 text-zinc-500" />
-                            <span className="text-[12px] font-medium text-zinc-200">
-                                {executing ? 'Executing plan…' : 'Execution log'}
-                            </span>
+                {(() => {
+                    // The log is process (what it's doing); once done it's demoted
+                    // to a one-line, expandable header so the Result leads.
+                    if (!executing && execLog.length === 0) return null;
+                    const done = !executing && (execResult || legacyResult);
+                    const collapsed = done && !logOpen;
+                    return (
+                        <div className="rounded-xl border border-zinc-800 bg-[#0c0c0e] overflow-hidden">
+                            <button
+                                onClick={() => done && setLogOpen((v) => !v)}
+                                className={`w-full flex items-center gap-2 px-4 py-2 border-b border-zinc-800 text-left ${done ? 'hover:bg-white/[0.03]' : 'cursor-default'}`}>
+                                {executing
+                                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                                    : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                                <Terminal className="w-3.5 h-3.5 text-zinc-500" />
+                                <span className="text-[12px] font-medium text-zinc-200 flex-1">
+                                    {executing ? 'Executing plan…' : `Execution log · ${execLog.length} lines`}
+                                </span>
+                                {done && (collapsed
+                                    ? <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />
+                                    : <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />)}
+                            </button>
+                            {!collapsed && (
+                                <div className="px-4 py-3 max-h-72 overflow-y-auto">
+                                    <pre className="text-[11px] leading-relaxed font-mono text-zinc-300 whitespace-pre-wrap break-words">
+                                        {execLog.join('\n')}
+                                    </pre>
+                                    <div ref={logEndRef} />
+                                </div>
+                            )}
                         </div>
-                        <div className="px-4 py-3 max-h-72 overflow-y-auto">
-                            <pre className="text-[11px] leading-relaxed font-mono text-zinc-300 whitespace-pre-wrap break-words">
-                                {execLog.join('\n')}
-                            </pre>
-                            <div ref={logEndRef} />
-                        </div>
-                    </div>
-                )}
+                    );
+                })()}
 
-                {execResult && (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 overflow-hidden">
-                        <div className="flex items-center gap-2 px-4 py-2 border-b border-emerald-500/20">
+                {execResult && <ResultCard result={execResult} />}
+                {!execResult && legacyResult && (
+                    <div className="rounded-xl border border-border/50 bg-card/50 overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                             <span className="text-[12px] font-semibold text-foreground">Result</span>
                         </div>
-                        <div className="px-4 py-3">
-                            <Markdown>{execResult}</Markdown>
-                        </div>
+                        <div className="px-4 py-3 opacity-80"><Markdown>{legacyResult}</Markdown></div>
                     </div>
                 )}
 

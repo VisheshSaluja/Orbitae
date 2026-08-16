@@ -116,6 +116,31 @@ export function validate(
     });
 }
 
+/** One changed file in the execution delta. */
+export interface ChangedFile {
+    /** Git status letter: A/M/D/R. */
+    status: string;
+    path: string;
+    adds: number;
+    dels: number;
+}
+
+export interface ExecStats {
+    steps: number;
+    /** 1-based index of the first failed step, if any. */
+    failed_step: number | null;
+    duration_ms: number;
+    cost_usd: number;
+}
+
+/** The structured execution result — assembled from data, never agent narration. */
+export interface ExecutionResult {
+    outcome: 'done' | 'failed';
+    headline: string;
+    changed_files: ChangedFile[];
+    stats: ExecStats;
+}
+
 /** A human review comment to apply to the diff (a line annotation). */
 export interface ReviewComment {
     file: string | null;
@@ -124,9 +149,20 @@ export interface ReviewComment {
     comment: string;
 }
 
-/** Apply a batch of human review comments to the working tree via an agent. */
-export function applyReviewComments(projectPath: string, comments: ReviewComment[]): Promise<string> {
-    return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, comments });
+/** Apply a batch of human review comments to the working tree via an agent.
+ *  `intent` (the plan goal) gives the agent context for terse comments. */
+export function applyReviewComments(projectPath: string, comments: ReviewComment[], intent?: string): Promise<string> {
+    return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, comments, intent: intent ?? null });
+}
+
+/** Persist pending plan annotations (opaque JSON) so they survive reopen. */
+export function saveAnnotations(sessionId: string, annotations: string): Promise<void> {
+    return invokeCommand<void>('orchestrator_save_annotations', { sessionId, annotations });
+}
+
+/** Load pending plan annotations for a session (JSON array; "[]" when none). */
+export function getAnnotations(sessionId: string): Promise<string> {
+    return invokeCommand<string>('orchestrator_get_annotations', { sessionId });
 }
 
 export interface PrResult {

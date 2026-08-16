@@ -18,8 +18,8 @@ use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::sqlite_store::{
-    delete_session, get_base_tree, list_plan_summaries, load_session, save_base_tree,
-    save_execution, PlanSummary, SqliteStore,
+    delete_session, get_annotations, get_base_tree, list_plan_summaries, load_session,
+    save_annotations, save_base_tree, save_execution, PlanSummary, SqliteStore,
 };
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
@@ -248,16 +248,28 @@ pub async fn orchestrator_execute(
         let _ = save_base_tree(pool.inner(), &session_id, base).await;
     }
 
+    // Captured before `config`/`plan` are moved into execution — needed to
+    // assemble the structured result afterward.
+    let result_cwd = config.cwd.clone();
+    let goal = plan.goal.clone();
+
     // 2. Run the long execution WITHOUT holding the session lock, so reads
     //    (reopening the plan, polling) never block while it runs for minutes.
-    //    Accumulate the log alongside streaming it, so a finished plan can be
-    //    reopened and still show what happened.
+    //    Accumulate the log + per-run metrics alongside streaming it.
     let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let metrics = Arc::new(Mutex::new((0.0f64, 0i64))); // (cost_usd, duration_ms)
     let handle = app_handle.clone();
     let pc = progress_channel.clone();
     let log_acc = log.clone();
+    let metrics_acc = metrics.clone();
     let outcomes = tokio::task::spawn_blocking(move || -> Result<_, String> {
         super::executor::run_tiered(&ClaudeBackend, &config, &plan, |ev, step| {
+            if let BackendEvent::Completed { cost_usd, duration_ms, .. } = ev {
+                if let Ok(mut m) = metrics_acc.lock() {
+                    m.0 += *cost_usd;
+                    m.1 += *duration_ms;
+                }
+            }
             let line = format_exec_event(ev);
             if !line.is_empty() {
                 let model = step.model.as_deref().unwrap_or("sonnet");
@@ -273,21 +285,46 @@ pub async fn orchestrator_execute(
     .await
     .map_err(|e| format!("task join: {e}"))??;
 
+    // Objective stats — computed before `outcomes` is moved into finish.
+    let steps = outcomes.len();
+    let failed_pos = outcomes.iter().position(|o| !o.ok);
+
     // 3. Record outcomes under a brief lock.
     let s = session.clone();
-    let (view, summary) = tokio::task::spawn_blocking(move || -> Result<(SessionView, String), String> {
+    let view = tokio::task::spawn_blocking(move || -> Result<SessionView, String> {
         let mut g = s.lock().map_err(|e| format!("session lock: {e}"))?;
-        let summary = g.finish_execution(&outcomes).map_err(|e| e.to_string())?;
-        Ok((SessionView::of(&g), summary))
+        g.finish_execution(&outcomes).map_err(|e| e.to_string())?;
+        Ok(SessionView::of(&g))
     })
     .await
     .map_err(|e| format!("task join: {e}"))??;
 
-    // 4. Persist the log + result so reopening a finished plan shows the outcome.
-    let log_text = log.lock().map(|l| l.join("\n")).unwrap_or_default();
-    let _ = save_execution(pool.inner(), &session_id, &log_text, &summary).await;
+    // 3.5 Assemble the STRUCTURED result from data we own (never the agent's
+    //     narration): outcome + the git delta + objective stats. The git work
+    //     runs off the async runtime.
+    let (cost_usd, duration_i64) = metrics.lock().map(|m| *m).unwrap_or((0.0, 0));
+    let duration_ms = duration_i64.max(0) as u64;
+    let base_for_result = base_tree.clone();
+    let result = tokio::task::spawn_blocking(move || super::result::ExecutionResult {
+        outcome: (if steps > 0 && failed_pos.is_none() { "done" } else { "failed" }).to_string(),
+        headline: goal,
+        changed_files: super::result::changed_files(&result_cwd, base_for_result.as_deref()),
+        stats: super::result::ExecStats {
+            steps,
+            failed_step: failed_pos.map(|i| i + 1),
+            duration_ms,
+            cost_usd,
+        },
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?;
+    let result_json = serde_json::to_string(&result).unwrap_or_default();
 
-    let _ = app_handle.emit(&result_channel, summary);
+    // 4. Persist the log + structured result so reopening shows the outcome.
+    let log_text = log.lock().map(|l| l.join("\n")).unwrap_or_default();
+    let _ = save_execution(pool.inner(), &session_id, &log_text, &result_json).await;
+
+    let _ = app_handle.emit(&result_channel, result_json);
     Ok(view)
 }
 
@@ -322,13 +359,21 @@ pub async fn orchestrator_validate(
         return Err("validation is turned off for this project".into());
     }
 
-    // The intent is the plan's goal.
-    let intent = super::sqlite_store::load_session(pool.inner(), &session_id)
+    // The intent is the plan's goal; the declared scope is the union of the
+    // files every step said it would touch — used for scope-drift detection.
+    let plan = super::sqlite_store::load_session(pool.inner(), &session_id)
         .await
         .ok()
         .flatten()
-        .and_then(|l| l.plan.map(|p| p.goal))
+        .and_then(|l| l.plan);
+    let intent = plan
+        .as_ref()
+        .map(|p| p.goal.clone())
         .unwrap_or_else(|| "the recent change".to_string());
+    let declared_scope: Vec<String> = plan
+        .as_ref()
+        .map(|p| p.steps.iter().flat_map(|s| s.files.clone()).collect())
+        .unwrap_or_default();
 
     // The baseline snapshot captured when execution started (if any) — lets the
     // review diff only what the run produced.
@@ -347,6 +392,7 @@ pub async fn orchestrator_validate(
             &cwd,
             &intent,
             base_tree.as_deref(),
+            &declared_scope,
             &settings,
         )
         .map_err(|e| e.to_string())
@@ -361,6 +407,7 @@ pub async fn orchestrator_validate(
 pub async fn orchestrator_apply_review_comments(
     project_path: String,
     comments: Vec<super::validation::ReviewComment>,
+    intent: Option<String>,
 ) -> Result<String, String> {
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
     if comments.is_empty() {
@@ -374,7 +421,7 @@ pub async fn orchestrator_apply_review_comments(
             model: Some("sonnet".to_string()),
             permission_mode: TaskPermissionMode::AcceptEdits,
         };
-        super::validation::apply_review_comments(&ClaudeBackend, &config, &comments)
+        super::validation::apply_review_comments(&ClaudeBackend, &config, &comments, intent.as_deref())
             .map_err(|e| e.to_string())
     })
     .await
@@ -401,6 +448,31 @@ pub async fn orchestrator_create_pr(
     })
     .await
     .map_err(|e| format!("task join: {e}"))?
+}
+
+/// Persist the developer's pending plan annotations so they survive reopen.
+#[command]
+pub async fn orchestrator_save_annotations(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+    annotations: String,
+) -> Result<(), String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+    save_annotations(pool.inner(), &session_id, &annotations)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Load the developer's pending plan annotations for a session (JSON array).
+#[command]
+pub async fn orchestrator_get_annotations(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<String, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+    get_annotations(pool.inner(), &session_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// List recent persisted plan sessions for a project (for the Plans list).

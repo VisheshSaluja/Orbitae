@@ -13,8 +13,10 @@
 //! v1 surfaces findings + evidence + risk for the developer to act on; applying
 //! auto-fixes and opening a PR are the next increments.
 
+use std::io::Read;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -101,13 +103,16 @@ const DIFF_VIEW_CAP: usize = 120_000;
 /// prompt tells the reviewer to prioritize.
 const MAX_FINDINGS: usize = 12;
 
-/// A deterministic check to run: a display name, a shell-free command, and the
-/// directory to run it in (repo root, or a monorepo subproject).
+/// A deterministic check to run: a display name, a shell-free command, the
+/// directory to run it in, a hard timeout, and exit codes to treat as "not
+/// applicable" (e.g. pytest's 5 = no tests collected → drop the check).
 struct CheckSpec {
     name: &'static str,
     program: &'static str,
     args: &'static [&'static str],
     dir: std::path::PathBuf,
+    timeout_secs: u64,
+    neutral_codes: &'static [i32],
 }
 
 /// Is a CLI tool available on PATH? (Avoids reporting "could not run X" as a
@@ -116,12 +121,135 @@ fn tool_exists(program: &str) -> bool {
     Command::new(program).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// Run a check command with a **hard wall-clock timeout**. A timeout is a
+/// FAILURE, never an implicit pass — a hung test is not a green test, and agents
+/// reward-hack. Output is redirected to a temp file (no pipe-buffer deadlocks);
+/// the process runs non-interactively (`CI=1`, no stdin) so watch-mode test
+/// runners exit instead of hanging. `Some((passed, tail))`, or `None` when the
+/// exit code is in `neutral` (the check doesn't apply).
+fn run_timed(
+    program: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+    neutral: &[i32],
+) -> Option<(bool, String)> {
+    let tmp = std::env::temp_dir().join(format!("orbitae-check-{}", uuid::Uuid::new_v4()));
+    let out = match std::fs::File::create(&tmp) {
+        Ok(f) => f,
+        Err(e) => return Some((false, format!("could not create temp output: {e}"))),
+    };
+    let err = match out.try_clone() {
+        Ok(f) => f,
+        Err(e) => return Some((false, format!("io: {e}"))),
+    };
+    let mut child = match Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .env("CI", "1")
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Some((false, format!("could not run {program}: {e}")));
+        }
+    };
+
+    let start = Instant::now();
+    let timed_out = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Err(status),
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                break Ok(());
+            }
+        }
+    };
+
+    let mut buf = String::new();
+    if let Ok(mut f) = std::fs::File::open(&tmp) {
+        let _ = f.read_to_string(&mut buf);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    let tail: String = buf
+        .lines()
+        .rev()
+        .take(20)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    match timed_out {
+        Ok(()) => Some((false, format!("timed out after {}s\n{tail}", timeout.as_secs()))),
+        Err(status) => {
+            if let Some(code) = status.code() {
+                if neutral.contains(&code) {
+                    return None;
+                }
+            }
+            Some((status.success(), tail))
+        }
+    }
+}
+
 /// The new-side file paths a unified diff touches (`+++ b/<path>`).
 fn changed_paths(diff: &str) -> Vec<String> {
     diff.lines()
         .filter_map(|l| l.strip_prefix("+++ b/"))
         .map(|p| p.trim().to_string())
         .collect()
+}
+
+/// Tolerant path equality — handles the plan declaring a partial path (`main.py`)
+/// while the diff reports the full one (`backend/app/main.py`), and vice-versa.
+fn path_matches(a: &str, b: &str) -> bool {
+    let a = a.trim_start_matches("./");
+    let b = b.trim_start_matches("./");
+    a == b || a.ends_with(&format!("/{b}")) || b.ends_with(&format!("/{a}"))
+}
+
+/// Files the change touched that the plan never declared it would — scope drift.
+/// Returns empty if the plan declared no scope at all (can't judge drift then).
+fn scope_drift(changed: &[String], declared: &[String]) -> Vec<String> {
+    if declared.is_empty() {
+        return Vec::new();
+    }
+    changed
+        .iter()
+        .filter(|c| !declared.iter().any(|d| path_matches(c, d)))
+        .cloned()
+        .collect()
+}
+
+/// Heuristic: does this path look like a test file? Used by the tamper guard —
+/// editing tests to force a green result is the single most common way agents
+/// fake success, so a feature change that also edits tests warrants a look.
+fn is_test_file(path: &str) -> bool {
+    let p = path.to_lowercase();
+    p.contains("/tests/")
+        || p.contains("/test/")
+        || p.contains("test_")
+        || p.ends_with("_test.py")
+        || p.ends_with("_test.go")
+        || p.ends_with("_test.rs")
+        || p.contains(".test.")
+        || p.contains(".spec.")
+        || p.ends_with("conftest.py")
 }
 
 /// Detect the fast, deterministic checks appropriate for a project. Scans the
@@ -155,11 +283,13 @@ fn detect_checks(cwd: &str, changed: &[String]) -> Vec<CheckSpec> {
             continue;
         }
         if dir.join("Cargo.toml").exists() {
-            specs.push(CheckSpec { name: "build", program: "cargo", args: &["check", "--quiet"], dir: dir.clone() });
-            specs.push(CheckSpec { name: "lint", program: "cargo", args: &["clippy", "--quiet"], dir: dir.clone() });
+            specs.push(CheckSpec { name: "build", program: "cargo", args: &["check", "--quiet"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
+            specs.push(CheckSpec { name: "lint", program: "cargo", args: &["clippy", "--quiet"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
+            // Real test execution — the evidence, not the agent's word.
+            specs.push(CheckSpec { name: "tests", program: "cargo", args: &["test", "--quiet"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
         }
         if dir.join("package.json").exists() {
-            specs.push(CheckSpec { name: "typecheck", program: "npx", args: &["tsc", "--noEmit"], dir: dir.clone() });
+            specs.push(CheckSpec { name: "typecheck", program: "npx", args: &["tsc", "--noEmit"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
         }
         let is_python = dir.join("pyproject.toml").exists()
             || dir.join("requirements.txt").exists()
@@ -171,35 +301,57 @@ fn detect_checks(cwd: &str, changed: &[String]) -> Vec<CheckSpec> {
                 program: "python3",
                 args: &["-m", "compileall", "-q", "-x", r"(\.venv|venv|node_modules|\.git|migrations)", "."],
                 dir: dir.clone(),
+                timeout_secs: 120,
+                neutral_codes: &[],
             });
+            // Run the real suite when pytest is available; exit 5 = "no tests
+            // collected", which is not a failure — drop the check then.
+            if tool_exists("pytest") {
+                specs.push(CheckSpec { name: "tests", program: "pytest", args: &["-q", "-p", "no:cacheprovider"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[5] });
+            }
+        }
+        // Go
+        if dir.join("go.mod").exists() && tool_exists("go") {
+            specs.push(CheckSpec { name: "build", program: "go", args: &["build", "./..."], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
+            specs.push(CheckSpec { name: "lint", program: "go", args: &["vet", "./..."], dir: dir.clone(), timeout_secs: 180, neutral_codes: &[] });
+            specs.push(CheckSpec { name: "tests", program: "go", args: &["test", "./..."], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
+        }
+        // Java (Maven, then Gradle) — build tools are slow, so the hard timeout matters.
+        if dir.join("pom.xml").exists() && tool_exists("mvn") {
+            specs.push(CheckSpec { name: "build", program: "mvn", args: &["-q", "-DskipTests", "compile"], dir: dir.clone(), timeout_secs: 420, neutral_codes: &[] });
+            specs.push(CheckSpec { name: "tests", program: "mvn", args: &["-q", "test"], dir: dir.clone(), timeout_secs: 420, neutral_codes: &[] });
+        } else if (dir.join("build.gradle").exists() || dir.join("build.gradle.kts").exists()) && tool_exists("gradle") {
+            specs.push(CheckSpec { name: "build", program: "gradle", args: &["-q", "compileJava"], dir: dir.clone(), timeout_secs: 420, neutral_codes: &[] });
+            specs.push(CheckSpec { name: "tests", program: "gradle", args: &["-q", "test"], dir: dir.clone(), timeout_secs: 420, neutral_codes: &[] });
+        }
+        // Ruby — lint + spec when those tools are present.
+        if dir.join("Gemfile").exists() {
+            if tool_exists("rubocop") {
+                specs.push(CheckSpec { name: "lint", program: "rubocop", args: &["--format", "simple"], dir: dir.clone(), timeout_secs: 180, neutral_codes: &[] });
+            }
+            if tool_exists("rspec") {
+                specs.push(CheckSpec { name: "tests", program: "rspec", args: &["--no-color"], dir: dir.clone(), timeout_secs: 300, neutral_codes: &[] });
+            }
         }
     }
     specs
 }
 
 /// Run the detected deterministic checks, capturing pass/fail + output evidence.
+/// Each runs under a hard timeout; a check whose exit code is "not applicable"
+/// (e.g. pytest with no tests) is dropped rather than shown as a failure.
 fn run_checks(cwd: &str, changed: &[String]) -> Vec<Check> {
     detect_checks(cwd, changed)
         .into_iter()
-        .map(|spec| {
-            let out = Command::new(spec.program).args(spec.args).current_dir(&spec.dir).output();
-            match out {
-                Ok(o) => {
-                    let mut text = String::from_utf8_lossy(&o.stderr).to_string();
-                    if text.trim().is_empty() {
-                        text = String::from_utf8_lossy(&o.stdout).to_string();
-                    }
-                    // Keep only the tail — evidence, not a firehose.
-                    let tail: String = text.lines().rev().take(20).collect::<Vec<_>>()
-                        .into_iter().rev().collect::<Vec<_>>().join("\n");
-                    Check { name: spec.name.to_string(), passed: o.status.success(), output: tail }
-                }
-                Err(e) => Check {
-                    name: spec.name.to_string(),
-                    passed: false,
-                    output: format!("could not run {}: {e}", spec.program),
-                },
-            }
+        .filter_map(|spec| {
+            run_timed(
+                spec.program,
+                spec.args,
+                &spec.dir,
+                Duration::from_secs(spec.timeout_secs),
+                spec.neutral_codes,
+            )
+            .map(|(passed, output)| Check { name: spec.name.to_string(), passed, output })
         })
         .collect()
 }
@@ -374,6 +526,7 @@ pub fn apply_review_comments(
     backend: &dyn AgentBackend,
     config: &SessionConfig,
     comments: &[ReviewComment],
+    intent: Option<&str>,
 ) -> Result<String> {
     let list = comments
         .iter()
@@ -388,11 +541,18 @@ pub fn apply_review_comments(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // Context lets the agent resolve terse comments ("this is wrong") against
+    // what the change was actually for.
+    let context = intent
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|i| format!("The change under review was implementing: {i}\n\n"))
+        .unwrap_or_default();
     let prompt = format!(
-        "Apply ONLY these specific review comments to the code. Make each requested \
-         change in place and nothing else — do not refactor or touch anything not \
-         listed.\n\n{list}\n\nApply them now, then reply with a one-line summary of \
-         what you changed."
+        "{context}Apply ONLY these specific review comments to the code. Make each \
+         requested change in place and nothing else — do not refactor or touch \
+         anything not listed.\n\n{list}\n\nApply them now, then reply with a \
+         one-line summary of what you changed."
     );
     let convo = Conversation::start(backend, config.clone())?;
     let out = convo.ask(&prompt)?;
@@ -454,6 +614,7 @@ pub fn run_validation(
     cwd: &str,
     intent: &str,
     base_tree: Option<&str>,
+    declared_scope: &[String],
     settings: &OrchestrationSettings,
 ) -> Result<ValidationReport> {
     let diff = working_diff(cwd, base_tree);
@@ -494,6 +655,48 @@ pub fn run_validation(
             checks = run_checks(cwd, &changed); // re-verify after the edits
             findings.retain(|f| f.action != FindingAction::AutoFix);
         }
+    }
+
+    // Scope-drift guard: the change touched files the approved plan never
+    // declared. This is the "stayed in scope" half of the product — surfacing
+    // exactly what an agent quietly changed beyond what you approved.
+    let drift = scope_drift(&changed, declared_scope);
+    if !drift.is_empty() {
+        findings.push(Finding {
+            title: "Change touched files outside the approved plan".into(),
+            detail: format!(
+                "The plan scoped its work to specific files, but the change also \
+                 modified: {}. Confirm these out-of-scope edits are intended — the \
+                 change went beyond the approved boundary.",
+                drift.join(", ")
+            ),
+            severity: Severity::Warning,
+            action: FindingAction::Escalate,
+            file: drift.first().cloned(),
+            anchor: None,
+        });
+    }
+
+    // Tamper guard: a feature change that ALSO edits test files is the classic
+    // reward-hack shape (weakening tests to force green). Flag it — but don't
+    // nag on pure test work (adding/strengthening tests is good).
+    let touched_tests: Vec<&String> = changed.iter().filter(|p| is_test_file(p)).collect();
+    let touched_nontest = changed.iter().any(|p| !is_test_file(p));
+    if !touched_tests.is_empty() && touched_nontest {
+        findings.push(Finding {
+            title: "Change also edited test files".into(),
+            detail: format!(
+                "This change modified test files ({}) alongside the implementation. \
+                 Confirm the tests were added or strengthened — not weakened, \
+                 skipped, or deleted. Loosened tests are a way green checks become \
+                 misleading.",
+                touched_tests.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+            severity: Severity::Warning,
+            action: FindingAction::Escalate,
+            file: touched_tests.first().map(|s| s.to_string()),
+            anchor: None,
+        });
     }
 
     let (risk_level, risk_reasons) = assess_risk(&checks, &findings);
@@ -563,6 +766,36 @@ mod tests {
         assert_eq!(fs[1].severity, Severity::Warning);
         assert_eq!(fs[1].action, FindingAction::AutoFix);
         assert_eq!(fs[1].file, None); // absent → None, not empty string
+    }
+
+    #[test]
+    fn scope_drift_flags_undeclared_files() {
+        let declared = vec!["backend/app/main.py".to_string(), "public/index.html".to_string()];
+        let changed = vec![
+            "backend/app/main.py".to_string(),   // declared (exact)
+            "public/index.html".to_string(),      // declared
+            "backend/app/routes/auth.py".to_string(), // NOT declared → drift
+        ];
+        let drift = scope_drift(&changed, &declared);
+        assert_eq!(drift, vec!["backend/app/routes/auth.py".to_string()]);
+    }
+
+    #[test]
+    fn scope_drift_matches_partial_paths_and_skips_when_unscoped() {
+        // Plan declared a bare filename; diff has the full path → in scope.
+        assert!(scope_drift(&["backend/app/main.py".into()], &["main.py".into()]).is_empty());
+        // No declared scope → can't judge drift.
+        assert!(scope_drift(&["a.rs".into(), "b.rs".into()], &[]).is_empty());
+    }
+
+    #[test]
+    fn detects_test_files() {
+        assert!(is_test_file("src/foo_test.rs"));
+        assert!(is_test_file("backend/tests/test_auth.py"));
+        assert!(is_test_file("web/Login.spec.ts"));
+        assert!(is_test_file("api/conftest.py"));
+        assert!(!is_test_file("src/main.rs"));
+        assert!(!is_test_file("backend/app/routes/auth.py"));
     }
 
     #[test]

@@ -76,6 +76,14 @@ fn build_plan_prompt(task: &str) -> String {
          work needs into the implementation step itself. Reserve multi-step, \
          investigation-heavy plans for genuinely large or risky work.\n\
          - Prefer the laziest approach that fully works; don't over-engineer.\n\
+         - Do NOT add a step that tells an agent to \"run it and verify\", \
+         \"confirm it works\", or self-report PASS/FAIL. An agent cannot reliably \
+         verify its own work and will produce false confidence. Verification is \
+         handled automatically after execution by deterministic checks \
+         (build/lint/type/tests) and an independent review. If something genuinely \
+         needs a HUMAN to verify (a live login/OAuth round-trip, a real \
+         deployment, visual QA), fold a one-line \"human must verify: …\" note \
+         into the relevant step instead of making it an agent step.\n\
          - Order steps by dependency.\n\
          - Set \"model\" per step by difficulty: haiku for mechanical work, \
          sonnet for normal, opus for hard reasoning.\n\
