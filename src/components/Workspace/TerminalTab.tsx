@@ -419,8 +419,8 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 )
                             ))}
 
-                            {/* Recent Plans (history) */}
-                            {!planActive && planSummaries.length > 0 && (
+                            {/* Recent Plans (history) — only on the empty start screen */}
+                            {thread.length === 0 && !planActive && planSummaries.length > 0 && (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70 px-1">
                                         <ListChecks className="w-3.5 h-3.5" /> Recent Plans
@@ -461,7 +461,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 </div>
                             )}
 
-                            {!planActive && (<>
+                            {thread.length === 0 && !planActive && (<>
                             {/* Quick actions bar */}
                             <div className="flex items-center gap-2 flex-wrap">
                                 <button

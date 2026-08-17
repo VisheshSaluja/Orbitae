@@ -603,6 +603,7 @@ pub async fn orchestrator_edit_step(
     step_id: String,
     title: Option<String>,
     detail_md: Option<String>,
+    model: Option<String>,
 ) -> Result<SessionView, String> {
     validation::validate_id(&session_id).map_err(|e| e.to_string())?;
     validation::validate_id(&step_id).map_err(|e| e.to_string())?;
@@ -612,6 +613,8 @@ pub async fn orchestrator_edit_step(
             StepEdit {
                 title,
                 detail_md,
+                // A provided model sets that tier; absent leaves it unchanged.
+                model: model.map(Some),
                 ..Default::default()
             },
         )?;

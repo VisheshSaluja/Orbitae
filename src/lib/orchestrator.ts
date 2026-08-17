@@ -223,13 +223,14 @@ export function get(sessionId: string): Promise<SessionView> {
 export function editStep(
     sessionId: string,
     stepId: string,
-    changes: { title?: string; detailMd?: string },
+    changes: { title?: string; detailMd?: string; model?: string },
 ): Promise<SessionView> {
     return invokeCommand<SessionView>('orchestrator_edit_step', {
         sessionId,
         stepId,
         title: changes.title ?? null,
         detailMd: changes.detailMd ?? null,
+        model: changes.model ?? null,
     });
 }
 

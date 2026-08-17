@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, ChevronDown, Terminal, CheckCircle2,
-    ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2, ClipboardCheck,
+    ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2, ClipboardCheck, Layers,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
 import type { SessionView, Plan, PlanStep, ValidationReport, Finding, ExecutionResult } from '../../lib/orchestrator';
@@ -593,6 +593,25 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                     </div>
                 )}
 
+                {/* Model tiering summary — the token-efficiency at a glance. */}
+                {plan.steps.length > 0 && (() => {
+                    const mix = plan.steps.reduce((acc, s) => {
+                        const m = s.model ?? 'sonnet';
+                        acc[m] = (acc[m] ?? 0) + 1;
+                        return acc;
+                    }, {} as Record<string, number>);
+                    const order = ['haiku', 'sonnet', 'opus'];
+                    return (
+                        <div className="flex items-center gap-1.5 px-1 text-[10px] text-muted-foreground/60">
+                            <Layers className="w-3 h-3" /> Model tiering:
+                            {Object.entries(mix).sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([m, n]) => (
+                                <span key={m} className={`px-1.5 py-0.5 rounded-full font-medium ${MODEL_COLORS[m] ?? 'bg-muted/50 text-muted-foreground'}`}>{n}× {m}</span>
+                            ))}
+                            <span className="text-muted-foreground/40">— cheaper tiers where the work allows</span>
+                        </div>
+                    );
+                })()}
+
                 {plan.status !== 'confirmed' && plan.steps.length > 0 && (
                     <p className="text-[10px] text-muted-foreground/50 px-1 flex items-center gap-1">
                         <MessageSquarePlus className="w-3 h-3" /> Highlight any text in the plan to comment on it.
@@ -608,9 +627,21 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                             <span className="text-[11px] text-muted-foreground/50 font-mono">{i + 1}</span>
                             <span className="text-[13px] font-medium text-foreground flex-1 min-w-0 truncate">{step.title}</span>
                             {step.user_edited && <Lock className="w-3 h-3 text-amber-400/70 shrink-0" aria-label="edited — preserved on revision" />}
-                            {step.model && (
+                            {plan.status !== 'confirmed' ? (
+                                <select
+                                    value={step.model ?? 'sonnet'}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => run('Model', () => orch.editStep(sessionId!, step.id, { model: e.target.value }))}
+                                    title="Model tier for this step — cheaper models cost less; pick the smallest that can do it"
+                                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 border-0 outline-none cursor-pointer appearance-none text-center ${MODEL_COLORS[step.model ?? 'sonnet'] ?? 'bg-muted/50 text-muted-foreground'}`}
+                                >
+                                    <option value="haiku">haiku</option>
+                                    <option value="sonnet">sonnet</option>
+                                    <option value="opus">opus</option>
+                                </select>
+                            ) : step.model ? (
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${MODEL_COLORS[step.model] ?? 'bg-muted/50 text-muted-foreground'}`}>{step.model}</span>
-                            )}
+                            ) : null}
                         </div>
 
                         {/* Step body */}
