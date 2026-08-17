@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { invokeCommand } from '../../lib/tauri';
 import * as tm from '../../lib/terminalManager';
 import { toast } from 'sonner';
@@ -9,10 +9,17 @@ import {
     ListChecks,
 } from 'lucide-react';
 import { TerminalGrid } from './TerminalGrid';
-import { SmartCommandStrip } from './SmartCommandStrip';
+import { SmartCommandStrip, RouteResultView, type DirectResponse } from './SmartCommandStrip';
 import { PlanReviewPanel } from './PlanReviewPanel';
 import * as orch from '../../lib/orchestrator';
+import type { SessionView } from '../../lib/orchestrator';
 import type { SessionMetrics } from '../../types';
+
+/** One entry in the Agents conversation thread. */
+type ChatMsg =
+    | { id: string; role: 'user'; text: string }
+    | { id: string; role: 'assistant'; kind: 'route'; response: DirectResponse }
+    | { id: string; role: 'assistant'; kind: 'plan'; prompt: string; sessionId?: string; goal?: string; status?: string };
 
 interface AgentSession {
     id: string;
@@ -249,12 +256,58 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         }
     };
 
-    // Complex queries enter the plan-first loop: produce a plan the developer
-    // reviews and confirms before anything executes.
+    // The conversation thread — user prompts, direct answers, and plan cards
+    // accumulate here so nothing is overwritten and it reads like a chat.
+    const [thread, setThread] = useState<ChatMsg[]>([]);
+    const [openMsgId, setOpenMsgId] = useState<string | null>(null);
+    const msgIdc = useRef(0);
+    const activePlanMsgId = useRef<string | null>(null);
+    const nextMsgId = () => `m${msgIdc.current++}`;
+
+    // A direct Q&A is one exchange (question + answer). A task is ONE plan card —
+    // no separate user bubble — that updates in place.
+    const handleDirectResult = useCallback((query: string, response: DirectResponse) => {
+        setThread((t) => [
+            ...t,
+            { id: nextMsgId(), role: 'user', text: query },
+            { id: nextMsgId(), role: 'assistant', kind: 'route', response },
+        ]);
+    }, []);
+
+    // Complex queries enter the plan-first loop: append a plan card to the thread
+    // and open it in the side panel. Each task is its own message (no overwrite).
     const handleSmartTask = useCallback((prompt: string, useGsd: boolean) => {
+        const id = nextMsgId();
+        activePlanMsgId.current = id;
+        setThread((t) => [...t, { id, role: 'assistant', kind: 'plan', prompt }]);
+        setOpenMsgId(id);
         setPlanUseGsd(useGsd);
+        setPlanReopenId(null);
         setPlanTask(prompt);
     }, []);
+
+    // When a plan's session is created, link it back to its thread card so the
+    // card can reopen it later and show its goal/status.
+    const handlePlanSession = useCallback((view: SessionView) => {
+        const id = activePlanMsgId.current;
+        if (!id) return;
+        setThread((t) => t.map((m) =>
+            m.id === id && m.role === 'assistant' && m.kind === 'plan'
+                ? { ...m, sessionId: view.session_id, goal: view.plan?.goal, status: view.status }
+                : m));
+        activePlanMsgId.current = null;
+    }, []);
+
+    // Keep each plan card's status + goal in sync with the persisted summaries,
+    // so the single card updates in place (planning → reviewing → done).
+    useEffect(() => {
+        if (planSummaries.length === 0) return;
+        setThread((t) => t.map((m) => {
+            if (m.role !== 'assistant' || m.kind !== 'plan' || !m.sessionId) return m;
+            const s = planSummaries.find((p) => p.session_id === m.sessionId);
+            return s ? { ...m, goal: s.goal ?? m.goal, status: s.status } : m;
+        }));
+    }, [planSummaries]);
 
     const runningSessions = sessions.filter(s => s.status === 'running');
     const stoppedSessions = sessions.filter(s => s.status !== 'running');
@@ -274,27 +327,15 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         .filter(s => embeddedSessionIds.has(s.id))
         .map(s => s.id);
 
-    if (planTask || planReopenId) {
-        return (
-            <div className="h-full">
-                <PlanReviewPanel
-                    projectId={projectId}
-                    projectPath={projectPath}
-                    task={planTask ?? undefined}
-                    reopenId={planReopenId ?? undefined}
-                    useGsd={planUseGsd}
-                    model={selectedModel || null}
-                    onClose={() => { setPlanTask(null); setPlanReopenId(null); loadPlans(); }}
-                />
-            </div>
-        );
-    }
+    // The conversation persists: a task opens the plan as a side panel next to
+    // the composer + thread, instead of replacing the whole view.
+    const planActive = !!(planTask || planReopenId);
 
     return (
         <div className="h-full flex">
-            {/* Main content */}
-            <div className="flex-1 overflow-hidden flex flex-col">
-                {view === 'grid' ? (
+            {/* Conversation column — always present; narrows to a rail beside a plan */}
+            <div className={planActive ? "w-[400px] shrink-0 overflow-hidden flex flex-col" : "flex-1 overflow-hidden flex flex-col"}>
+                {view === 'grid' && !planActive ? (
                     <>
                         {/* Grid toolbar */}
                         <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/10 shrink-0">
@@ -347,17 +388,39 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                         )}
                     </>
                 ) : (
-                    <div className="flex-1 overflow-y-auto hide-scrollbar">
-                        <div className="max-w-3xl mx-auto p-6 space-y-6">
-                            {/* Smart Command Strip */}
-                            <SmartCommandStrip
-                                projectId={projectId}
-                                projectPath={projectPath}
-                                onSpawnTask={handleSmartTask}
-                            />
+                    <div className="flex-1 flex flex-col min-h-0">
+                        <div className="flex-1 overflow-y-auto hide-scrollbar">
+                        <div className={planActive ? "p-4 space-y-3" : "max-w-3xl mx-auto p-6 space-y-3"}>
+                            {/* Conversation thread */}
+                            {thread.length === 0 && !planActive && (
+                                <div className="text-center py-12">
+                                    <Bot className="w-8 h-8 text-muted-foreground/20 mx-auto mb-2" />
+                                    <p className="text-[12px] text-muted-foreground/50">Ask anything, or describe a task to build.</p>
+                                </div>
+                            )}
+                            {thread.map((m) => (
+                                m.role === 'user' ? (
+                                    <div key={m.id} className="flex justify-end">
+                                        <div className="max-w-[85%] rounded-2xl bg-foreground text-background px-3.5 py-2 text-[13px] whitespace-pre-wrap">{m.text}</div>
+                                    </div>
+                                ) : m.kind === 'route' ? (
+                                    <RouteResultView key={m.id} response={m.response} />
+                                ) : (
+                                    <button key={m.id}
+                                        onClick={() => { if (m.sessionId) { setOpenMsgId(m.id); setPlanTask(null); setPlanReopenId(m.sessionId); } }}
+                                        className={`w-full text-left flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5 transition-colors ${openMsgId === m.id ? 'border-foreground/30 bg-foreground/[0.03]' : 'border-border hover:border-foreground/20'}`}>
+                                        <ListChecks className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-[12px] font-medium text-foreground truncate">{m.goal ?? m.prompt}</div>
+                                            <div className="text-[10px] text-muted-foreground/50">{m.sessionId ? (m.status ?? 'plan') : 'planning…'}</div>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-muted-foreground/30 shrink-0" />
+                                    </button>
+                                )
+                            ))}
 
-                            {/* Recent Plans */}
-                            {planSummaries.length > 0 && (
+                            {/* Recent Plans (history) */}
+                            {!planActive && planSummaries.length > 0 && (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70 px-1">
                                         <ListChecks className="w-3.5 h-3.5" /> Recent Plans
@@ -366,8 +429,8 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                         {planSummaries.map((p) => (
                                             <div
                                                 key={p.session_id}
-                                                onClick={() => setPlanReopenId(p.session_id)}
-                                                className="group w-full text-left flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 hover:border-foreground/20 transition-colors cursor-pointer"
+                                                onClick={() => { setOpenMsgId(null); setPlanTask(null); setPlanReopenId(p.session_id); }}
+                                                className={`group w-full text-left flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5 hover:border-foreground/20 transition-colors cursor-pointer ${planReopenId === p.session_id ? 'border-foreground/30 bg-foreground/[0.03]' : 'border-border'}`}
                                             >
                                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                                                     p.status === 'done' ? 'bg-emerald-400'
@@ -398,6 +461,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 </div>
                             )}
 
+                            {!planActive && (<>
                             {/* Quick actions bar */}
                             <div className="flex items-center gap-2 flex-wrap">
                                 <button
@@ -629,12 +693,42 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     </p>
                                 </div>
                             )}
+                            </>)}
+                        </div>
+                        </div>
+
+                        {/* Composer pinned at the bottom — the conversation continues here */}
+                        <div className="shrink-0 border-t border-border bg-background">
+                            <div className={planActive ? "p-3" : "max-w-3xl mx-auto px-6 py-3"}>
+                                <SmartCommandStrip
+                                    projectId={projectId}
+                                    projectPath={projectPath}
+                                    onSpawnTask={handleSmartTask}
+                                    onDirectResult={handleDirectResult}
+                                />
+                            </div>
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* Right sidebar — ports + changes */}
+            {/* Right side: the active plan/review, or the ports + changes sidebar */}
+            {planActive ? (
+                <div className="flex-1 min-w-0 border-l border-border">
+                    <PlanReviewPanel
+                        key={planReopenId ?? planTask ?? 'plan'}
+                        projectId={projectId}
+                        projectPath={projectPath}
+                        task={planTask ?? undefined}
+                        reopenId={planReopenId ?? undefined}
+                        useGsd={planUseGsd}
+                        model={selectedModel || null}
+                        onClose={() => { setPlanTask(null); setPlanReopenId(null); setOpenMsgId(null); loadPlans(); }}
+                        onConfirmed={loadPlans}
+                        onSession={handlePlanSession}
+                    />
+                </div>
+            ) : (
             <div className="w-64 shrink-0 border-l border-border flex flex-col bg-muted/10 overflow-y-auto hide-scrollbar">
                 {/* Ports section */}
                 <div>
@@ -751,6 +845,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     </div>
                 </div>
             </div>
+            )}
         </div>
     );
 };

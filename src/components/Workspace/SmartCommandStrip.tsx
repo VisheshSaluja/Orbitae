@@ -17,7 +17,7 @@ interface RouteMatch {
     handler: string;
 }
 
-interface DirectResponse {
+export interface DirectResponse {
     kind: 'direct';
     route_id: string;
     route_name: string;
@@ -46,6 +46,8 @@ interface SmartCommandStripProps {
     projectId: string;
     projectPath: string;
     onSpawnTask: (prompt: string, useGsd: boolean) => void;
+    /** Called with a direct (zero-token) answer + the question — for the thread. */
+    onDirectResult?: (query: string, response: DirectResponse) => void;
 }
 
 const ROUTE_ICONS: Record<string, React.ElementType> = {
@@ -66,6 +68,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
     projectId,
     projectPath,
     onSpawnTask,
+    onDirectResult,
 }) => {
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
@@ -110,6 +113,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
 
         setLoading(true);
         setResult(null);
+        setQuery('');
 
         try {
             const response = await invokeCommand<RouteResponse>('route_request', {
@@ -120,8 +124,9 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
 
             switch (response.kind) {
                 case 'direct':
-                    setResult(response);
-                    setQuery('');
+                    // Prefer the thread; fall back to the inline card when used standalone.
+                    if (onDirectResult) onDirectResult(trimmed, response);
+                    else setResult(response);
                     break;
 
                 // For anything complex, always plan the USER'S actual query —
@@ -129,8 +134,6 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                 // real request away and planned the wrong thing).
                 case 'orchestrate':
                 case 'fallback':
-                    setQuery('');
-                    setResult(null);
                     onSpawnTask(trimmed, useGsd);
                     break;
             }
@@ -254,6 +257,22 @@ const ResultCard: React.FC<ResultCardProps> = ({ response, expanded, onToggle, o
                     <RouteResultBody routeId={response.route_id} data={response.data} />
                 </div>
             )}
+        </div>
+    );
+};
+
+/** A direct route result rendered as a thread message (no dismiss/toggle chrome). */
+export const RouteResultView: React.FC<{ response: DirectResponse }> = ({ response }) => {
+    const Icon = ROUTE_ICONS[response.route_id] ?? Info;
+    return (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50">
+                <Icon className="w-3.5 h-3.5 text-amber-400/70" />
+                <span className="text-[12px] font-semibold text-foreground">{response.route_name}</span>
+            </div>
+            <div className="px-4 py-3">
+                <RouteResultBody routeId={response.route_id} data={response.data} />
+            </div>
         </div>
     );
 };

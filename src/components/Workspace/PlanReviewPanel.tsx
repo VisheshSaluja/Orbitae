@@ -25,6 +25,8 @@ interface PlanReviewPanelProps {
     model?: string | null;
     onClose: () => void;
     onConfirmed?: (session: SessionView) => void;
+    /** Fires once when the session is first created/loaded (for the thread). */
+    onSession?: (session: SessionView) => void;
 }
 
 /** A developer comment pinned to a highlighted phrase in a plan step. */
@@ -66,7 +68,7 @@ const StatusDot: React.FC<{ status: PlanStep['status'] }> = ({ status }) => {
 };
 
 export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
-    projectId, projectPath, task, reopenId, useGsd = false, model = null, onClose, onConfirmed,
+    projectId, projectPath, task, reopenId, useGsd = false, model = null, onClose, onConfirmed, onSession,
 }) => {
     const [session, setSession] = useState<SessionView | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -132,10 +134,11 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
             ? orch.loadPlan(reopenId)
             : orch.begin(projectId, projectPath, task ?? '', useGsd, model);
         start
-            .then((v) => { if (!cancelled) setSession(v); })
+            .then((v) => { if (!cancelled) { setSession(v); onSession?.(v); } })
             .catch((e) => { if (!cancelled) setError(String(e)); })
             .finally(() => { if (!cancelled) setBusy(null); });
         return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId, projectPath, task, useGsd, model, reopenId]);
 
     // Reopening a finished plan: show its persisted log + result.
