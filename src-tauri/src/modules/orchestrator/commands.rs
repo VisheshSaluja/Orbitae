@@ -18,8 +18,9 @@ use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::sqlite_store::{
-    delete_session, get_annotations, get_base_tree, list_plan_summaries, load_session,
-    save_annotations, save_base_tree, save_execution, PlanSummary, SqliteStore,
+    delete_session, get_annotations, get_base_tree, get_boundary, list_plan_summaries,
+    load_session, save_annotations, save_base_tree, save_boundary, save_execution, PlanSummary,
+    SqliteStore,
 };
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
@@ -359,8 +360,9 @@ pub async fn orchestrator_validate(
         return Err("validation is turned off for this project".into());
     }
 
-    // The intent is the plan's goal; the declared scope is the union of the
-    // files every step said it would touch — used for scope-drift detection.
+    // The intent is the plan's goal. The scope policy is the developer-approved
+    // change boundary if one was saved, else derived from the plan's declared
+    // files (union of every step's `files`).
     let plan = super::sqlite_store::load_session(pool.inner(), &session_id)
         .await
         .ok()
@@ -370,10 +372,18 @@ pub async fn orchestrator_validate(
         .as_ref()
         .map(|p| p.goal.clone())
         .unwrap_or_else(|| "the recent change".to_string());
-    let declared_scope: Vec<String> = plan
-        .as_ref()
-        .map(|p| p.steps.iter().flat_map(|s| s.files.clone()).collect())
-        .unwrap_or_default();
+    let scope: super::validation::ScopePolicy = get_boundary(pool.inner(), &session_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_else(|| super::validation::ScopePolicy {
+            allowed: plan
+                .as_ref()
+                .map(|p| p.steps.iter().flat_map(|s| s.files.clone()).collect())
+                .unwrap_or_default(),
+            ..Default::default()
+        });
 
     // The baseline snapshot captured when execution started (if any) — lets the
     // review diff only what the run produced.
@@ -392,7 +402,7 @@ pub async fn orchestrator_validate(
             &cwd,
             &intent,
             base_tree.as_deref(),
-            &declared_scope,
+            &scope,
             &settings,
         )
         .map_err(|e| e.to_string())
@@ -473,6 +483,32 @@ pub async fn orchestrator_get_annotations(
     get_annotations(pool.inner(), &session_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Persist the developer-approved change boundary (ScopePolicy JSON).
+#[command]
+pub async fn orchestrator_save_boundary(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+    boundary: String,
+) -> Result<(), String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+    save_boundary(pool.inner(), &session_id, &boundary)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Load the approved change boundary for a session (JSON, or empty string).
+#[command]
+pub async fn orchestrator_get_boundary(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<String, String> {
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
+    Ok(get_boundary(pool.inner(), &session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default())
 }
 
 /// List recent persisted plan sessions for a project (for the Plans list).

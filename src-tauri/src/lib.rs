@@ -173,6 +173,8 @@ pub fn run() {
         modules::orchestrator::commands::orchestrator_apply_review_comments,
         modules::orchestrator::commands::orchestrator_save_annotations,
         modules::orchestrator::commands::orchestrator_get_annotations,
+        modules::orchestrator::commands::orchestrator_save_boundary,
+        modules::orchestrator::commands::orchestrator_get_boundary,
         modules::orchestrator::commands::orchestrator_create_pr,
         modules::orchestrator::commands::orchestrator_list_plans,
         modules::orchestrator::commands::orchestrator_load_plan,

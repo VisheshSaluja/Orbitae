@@ -320,6 +320,29 @@ pub async fn get_annotations(pool: &SqlitePool, session_id: &str) -> Result<Stri
         .unwrap_or_else(|| "[]".to_string()))
 }
 
+/// Persist the approved change boundary (ScopePolicy JSON) on a session.
+pub async fn save_boundary(pool: &SqlitePool, session_id: &str, boundary: &str) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET boundary = ? WHERE id = ?")
+        .bind(boundary)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
+/// Read the approved change boundary for a session, if one was saved.
+pub async fn get_boundary(pool: &SqlitePool, session_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT boundary FROM orch_sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(row
+        .and_then(|r| r.get::<Option<String>, _>("boundary"))
+        .filter(|s| !s.trim().is_empty()))
+}
+
 /// Mark plans left `executing` as `errored` — their run died with the app.
 pub async fn reconcile_executing(pool: &SqlitePool) -> Result<u64> {
     let r = sqlx::query("UPDATE orch_sessions SET status = 'errored' WHERE status = 'executing'")

@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import {
     Loader2, Check, CheckCheck, Pencil, MessageCircleQuestion,
     RotateCcw, X, Play, Lock, Send, ChevronRight, ChevronDown, Terminal, CheckCircle2,
-    ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2,
+    ShieldCheck, GitPullRequest, ExternalLink, MessageSquarePlus, Trash2, ClipboardCheck,
 } from 'lucide-react';
 import * as orch from '../../lib/orchestrator';
 import type { SessionView, Plan, PlanStep, ValidationReport, Finding, ExecutionResult } from '../../lib/orchestrator';
@@ -101,6 +101,11 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
     const noteIdc = useRef(0);
     const bodyRef = useRef<HTMLDivElement>(null);
     const notesHydrated = useRef(false); // don't persist until we've loaded
+
+    // The approved change boundary the gate enforces against.
+    const [boundary, setBoundary] = useState<orch.ScopePolicy | null>(null);
+    const [newAllowed, setNewAllowed] = useState('');
+    const boundaryHydrated = useRef(false);
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [execLog]);
 
@@ -183,6 +188,31 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!sessionId || !notesHydrated.current) return;
         orch.saveAnnotations(sessionId, JSON.stringify(planNotes)).catch(() => {});
     }, [planNotes, sessionId]);
+
+    // Hydrate the change boundary once the plan is known: use the saved one, else
+    // derive a default from the plan's declared files. Then persist on edit.
+    useEffect(() => {
+        if (!sessionId || !plan) return;
+        boundaryHydrated.current = false;
+        orch.getBoundary(sessionId)
+            .then((json) => {
+                let b: orch.ScopePolicy | null = null;
+                if (json) { try { b = JSON.parse(json) as orch.ScopePolicy; } catch { /* ignore */ } }
+                if (!b) {
+                    const allowed = [...new Set(plan.steps.flatMap((s) => s.files))];
+                    b = { allowed, protected: [], max_diff_lines: null };
+                }
+                setBoundary(b);
+            })
+            .catch(() => {})
+            .finally(() => { boundaryHydrated.current = true; });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionId, plan?.id]);
+
+    useEffect(() => {
+        if (!sessionId || !boundaryHydrated.current || !boundary) return;
+        orch.saveBoundary(sessionId, boundary).catch(() => {});
+    }, [boundary, sessionId]);
 
     const run = useCallback(async (label: string, fn: () => Promise<SessionView>) => {
         setBusy(label);
@@ -334,7 +364,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!plan) return;
         setPrBusy(true);
         try {
-            const res = await orch.createPr(projectPath, plan.goal, buildPrBody(plan.goal, report));
+            const res = await orch.createPr(projectPath, plan.goal, buildReceipt(plan, report, execResult));
             setPrResult(res);
             toast.success(res.pr_url ? 'PR opened' : res.message);
         } catch (e) {
@@ -460,15 +490,27 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                             {prResult ? (
                                 <PrResultCard result={prResult} />
                             ) : (
-                                <button
-                                    onClick={doCreatePr}
-                                    disabled={prBusy}
-                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-[13px] font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50"
-                                >
-                                    {prBusy
-                                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening PR…</>
-                                        : <><GitPullRequest className="w-4 h-4" /> Create PR</>}
-                                </button>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={doCreatePr}
+                                        disabled={prBusy}
+                                        className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-foreground text-background px-4 py-3 text-[13px] font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50"
+                                    >
+                                        {prBusy
+                                            ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening PR…</>
+                                            : <><GitPullRequest className="w-4 h-4" /> Create PR</>}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(buildReceipt(plan, report, execResult))
+                                                .then(() => toast.success('Evidence receipt copied'))
+                                                .catch(() => toast.error('Copy failed'));
+                                        }}
+                                        className="flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-[13px] font-medium hover:border-foreground/20 transition-colors"
+                                        title="Copy the reproducible evidence receipt">
+                                        <ClipboardCheck className="w-4 h-4" /> Copy receipt
+                                    </button>
+                                </div>
                             )}
                         </>
                     ) : (
@@ -499,6 +541,52 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
                                 </div>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {/* Change boundary — the approved scope the gate enforces against. */}
+                {boundary && (
+                    <div className="rounded-xl border border-border/60 bg-card/40 p-3 space-y-2">
+                        <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400/80" />
+                            <span className="text-[12px] font-semibold text-foreground">Change boundary</span>
+                            <span className="text-[10px] text-muted-foreground/60">— files this change may touch</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {boundary.allowed.length === 0 && (
+                                <span className="text-[11px] text-amber-400/80">Not scoped — every changed file will read as out-of-scope. Add the files this change should touch.</span>
+                            )}
+                            {boundary.allowed.map((f) => (
+                                <span key={f} className="inline-flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 rounded bg-muted/50 text-foreground/70">
+                                    {f}
+                                    {plan.status !== 'confirmed' && (
+                                        <button onClick={() => setBoundary((b) => b && ({ ...b, allowed: b.allowed.filter((x) => x !== f) }))}
+                                            className="text-muted-foreground/50 hover:text-red-400"><X className="w-2.5 h-2.5" /></button>
+                                    )}
+                                </span>
+                            ))}
+                        </div>
+                        {plan.status !== 'confirmed' && (
+                            <div className="flex items-center gap-2">
+                                <input value={newAllowed} onChange={(e) => setNewAllowed(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && newAllowed.trim()) {
+                                            const v = newAllowed.trim();
+                                            setBoundary((b) => b && (b.allowed.includes(v) ? b : { ...b, allowed: [...b.allowed, v] }));
+                                            setNewAllowed('');
+                                        }
+                                    }}
+                                    placeholder="add a file or glob (e.g. src/**, public/index.html)"
+                                    className="flex-1 bg-muted/30 rounded px-2 py-1 text-[11px] font-mono outline-none border border-border focus:border-foreground/20" />
+                                <label className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+                                    max +lines
+                                    <input type="number" min={0} value={boundary.max_diff_lines ?? ''}
+                                        onChange={(e) => setBoundary((b) => b && ({ ...b, max_diff_lines: e.target.value ? parseInt(e.target.value, 10) : null }))}
+                                        className="w-16 bg-muted/30 rounded px-1.5 py-1 text-[11px] outline-none border border-border focus:border-foreground/20" />
+                                </label>
+                            </div>
+                        )}
+                        <p className="text-[10px] text-muted-foreground/40">CI config, lockfiles, secrets, and migrations are always protected.</p>
                     </div>
                 )}
 
@@ -640,28 +728,52 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
 };
 
 /** Build a clean PR body from the goal + validation report (no AI attribution). */
-function buildPrBody(goal: string, report: ValidationReport | null): string {
-    const lines = [`## Summary`, ``, goal, ``];
+/**
+ * A reproducible evidence receipt for the change: what was approved, the change
+ * boundary, what actually changed, which checks *actually ran*, and every open
+ * finding (scope drift + test-integrity + review). Used as the PR body and the
+ * in-app exportable artifact. Honest framing — evidence you can inspect, not a
+ * proof of correctness.
+ */
+function buildReceipt(plan: Plan, report: ValidationReport | null, result: ExecutionResult | null): string {
+    const L: string[] = [`# Orbitae evidence receipt`, ``];
+    if (report) L.push(`**Verdict: ${report.risk_level}** — ${report.risk_reasons.join('; ')}`, ``);
+
+    L.push(`## Intent`, ``, plan.goal, ``);
+
+    const boundary = [...new Set(plan.steps.flatMap((s) => s.files))];
+    L.push(`## Change boundary (approved scope)`, ``);
+    L.push(boundary.length ? boundary.map((f) => `- \`${f}\``).join('\n') : `_Not explicitly scoped._`, ``);
+
+    if (result && result.changed_files.length) {
+        L.push(`## Changed files`, ``);
+        for (const f of result.changed_files) L.push(`- \`${f.status}\` ${f.path} (+${f.adds} −${f.dels})`);
+        L.push(``);
+    }
+
     if (report) {
-        lines.push(`## Validation`, ``, `**Risk: ${report.risk_level}** — ${report.risk_reasons.join('; ')}`, ``);
+        L.push(`## Checks (actually run)`, ``);
         if (report.checks.length) {
-            lines.push(`### Checks`);
-            for (const c of report.checks) lines.push(`- ${c.passed ? '✅' : '❌'} ${c.name}`);
-            lines.push(``);
+            for (const c of report.checks) L.push(`- ${c.passed ? '✅' : '❌'} ${c.name}${c.passed ? '' : ` — ${(c.output || 'failed').split('\n').slice(-1)[0]}`}`);
+        } else {
+            L.push(`_No deterministic checks for this project._`);
         }
+        L.push(``);
         if (report.auto_fixed.length) {
-            lines.push(`### Auto-fixed`);
-            for (const t of report.auto_fixed) lines.push(`- ${t}`);
-            lines.push(``);
+            L.push(`## Auto-fixed`, ``, ...report.auto_fixed.map((t) => `- ${t}`), ``);
         }
         const escalations = report.findings.filter((f) => f.action === 'escalate');
+        L.push(`## Findings (${escalations.length} to review)`, ``);
         if (escalations.length) {
-            lines.push(`### Findings to review`);
-            for (const f of escalations) lines.push(`- **[${f.severity}]** ${f.title} — ${f.detail}`);
-            lines.push(``);
+            for (const f of escalations) L.push(`- **[${f.severity}]** ${f.title} — ${f.detail}`);
+        } else {
+            L.push(`_None._`);
         }
+        L.push(``);
     }
-    return lines.join('\n');
+
+    if (result) L.push(`---`, `_${result.stats.steps} steps · ${Math.round(result.stats.duration_ms / 1000)}s · $${result.stats.cost_usd.toFixed(4)}. Reproducible evidence you can inspect — not a proof of correctness. Orbitae never merges; you're the gate._`);
+    return L.join('\n');
 }
 
 const PrResultCard: React.FC<{ result: orch.PrResult }> = ({ result }) => {

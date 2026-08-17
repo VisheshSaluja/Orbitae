@@ -155,6 +155,26 @@ export function applyReviewComments(projectPath: string, comments: ReviewComment
     return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, comments, intent: intent ?? null });
 }
 
+/** The approved change boundary the gate enforces against. */
+export interface ScopePolicy {
+    /** Paths the change may touch (drives scope-drift). */
+    allowed: string[];
+    /** Extra paths marked protected, beyond the built-in set. */
+    protected: string[];
+    /** Optional cap on added lines. */
+    max_diff_lines: number | null;
+}
+
+/** Persist the developer-approved change boundary. */
+export function saveBoundary(sessionId: string, boundary: ScopePolicy): Promise<void> {
+    return invokeCommand<void>('orchestrator_save_boundary', { sessionId, boundary: JSON.stringify(boundary) });
+}
+
+/** Load the approved change boundary (JSON string, or "" if none). */
+export function getBoundary(sessionId: string): Promise<string> {
+    return invokeCommand<string>('orchestrator_get_boundary', { sessionId });
+}
+
 /** Persist pending plan annotations (opaque JSON) so they survive reopen. */
 export function saveAnnotations(sessionId: string, annotations: string): Promise<void> {
     return invokeCommand<void>('orchestrator_save_annotations', { sessionId, annotations });

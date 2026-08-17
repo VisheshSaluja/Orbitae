@@ -236,6 +236,33 @@ fn scope_drift(changed: &[String], declared: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Sensitive paths that usually need explicit approval to change: CI/build
+/// config, dependency lockfiles, secrets/env, and DB migrations. Touching these
+/// is how a change can quietly alter security, dependencies, or data — so the
+/// gate surfaces them. (Tests are handled separately by the tamper guard.)
+fn is_protected_path(path: &str) -> bool {
+    let p = path.to_lowercase();
+    let file = p.rsplit('/').next().unwrap_or(&p);
+    // CI / build pipeline config
+    p.contains(".github/workflows/")
+        || p.contains("/.circleci/")
+        || file == ".gitlab-ci.yml"
+        || file == "azure-pipelines.yml"
+        || file == "jenkinsfile"
+        // dependency lockfiles
+        || file == "package-lock.json"
+        || file == "yarn.lock"
+        || file == "pnpm-lock.yaml"
+        || file == "cargo.lock"
+        || file == "poetry.lock"
+        || file == "gemfile.lock"
+        || file == "go.sum"
+        // secrets / env
+        || file.starts_with(".env")
+        // database migrations
+        || p.contains("/migrations/")
+}
+
 /// Heuristic: does this path look like a test file? Used by the tamper guard —
 /// editing tests to force a green result is the single most common way agents
 /// fake success, so a feature change that also edits tests warrants a look.
@@ -508,6 +535,20 @@ fn apply_autofixes(
     Ok(())
 }
 
+/// The approved change boundary the gate enforces against. `allowed` is the set
+/// of paths the change may touch (drives scope-drift); `protected` extends the
+/// built-in protected set (CI/lockfiles/env/migrations); `max_diff_lines` caps
+/// the change size. Persisted per session and approved with the plan.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScopePolicy {
+    #[serde(default)]
+    pub allowed: Vec<String>,
+    #[serde(default)]
+    pub protected: Vec<String>,
+    #[serde(default)]
+    pub max_diff_lines: Option<u32>,
+}
+
 /// A human review comment to apply: the file, a code anchor from the diff, and
 /// the developer's ask. Anchors are best-effort (the agent locates them).
 #[derive(Debug, Clone, Deserialize)]
@@ -614,7 +655,7 @@ pub fn run_validation(
     cwd: &str,
     intent: &str,
     base_tree: Option<&str>,
-    declared_scope: &[String],
+    scope: &ScopePolicy,
     settings: &OrchestrationSettings,
 ) -> Result<ValidationReport> {
     let diff = working_diff(cwd, base_tree);
@@ -660,7 +701,7 @@ pub fn run_validation(
     // Scope-drift guard: the change touched files the approved plan never
     // declared. This is the "stayed in scope" half of the product — surfacing
     // exactly what an agent quietly changed beyond what you approved.
-    let drift = scope_drift(&changed, declared_scope);
+    let drift = scope_drift(&changed, &scope.allowed);
     if !drift.is_empty() {
         findings.push(Finding {
             title: "Change touched files outside the approved plan".into(),
@@ -675,6 +716,52 @@ pub fn run_validation(
             file: drift.first().cloned(),
             anchor: None,
         });
+    }
+
+    // Protected-path guard: the change touched sensitive files (CI config,
+    // lockfiles, secrets/env, migrations, plus any the boundary marks protected)
+    // that should need explicit approval.
+    let protected: Vec<&String> = changed
+        .iter()
+        .filter(|p| is_protected_path(p) || scope.protected.iter().any(|g| path_matches(p, g)))
+        .collect();
+    if !protected.is_empty() {
+        findings.push(Finding {
+            title: "Change modified protected paths".into(),
+            detail: format!(
+                "The change touched sensitive files that usually need explicit \
+                 approval: {}. Confirm these edits are intended — CI config, \
+                 lockfiles, secrets, and migrations are how a change can quietly \
+                 alter security, dependencies, or data.",
+                protected.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+            severity: Severity::Warning,
+            action: FindingAction::Escalate,
+            file: protected.first().map(|s| s.to_string()),
+            anchor: None,
+        });
+    }
+
+    // Max-diff cap: an oversized change is harder to review safely — flag it if
+    // the boundary set a ceiling.
+    if let Some(max) = scope.max_diff_lines {
+        let added = diff
+            .lines()
+            .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+            .count() as u32;
+        if added > max {
+            findings.push(Finding {
+                title: "Change is larger than the approved limit".into(),
+                detail: format!(
+                    "This change adds {added} lines, over the approved cap of {max}. \
+                     Large changes are harder to review safely — confirm it can't be split."
+                ),
+                severity: Severity::Warning,
+                action: FindingAction::Escalate,
+                file: None,
+                anchor: None,
+            });
+        }
     }
 
     // Tamper guard: a feature change that ALSO edits test files is the classic
@@ -786,6 +873,18 @@ mod tests {
         assert!(scope_drift(&["backend/app/main.py".into()], &["main.py".into()]).is_empty());
         // No declared scope → can't judge drift.
         assert!(scope_drift(&["a.rs".into(), "b.rs".into()], &[]).is_empty());
+    }
+
+    #[test]
+    fn detects_protected_paths() {
+        assert!(is_protected_path(".github/workflows/ci.yml"));
+        assert!(is_protected_path("package-lock.json"));
+        assert!(is_protected_path("frontend/pnpm-lock.yaml"));
+        assert!(is_protected_path("backend/.env"));
+        assert!(is_protected_path("api/db/migrations/0001_init.sql"));
+        assert!(is_protected_path("Cargo.lock"));
+        assert!(!is_protected_path("src/main.rs"));
+        assert!(!is_protected_path("backend/app/routes/auth.py"));
     }
 
     #[test]
