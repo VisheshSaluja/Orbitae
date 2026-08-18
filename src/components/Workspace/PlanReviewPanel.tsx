@@ -134,7 +134,10 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
             ? orch.loadPlan(reopenId)
             : orch.begin(projectId, projectPath, task ?? '', useGsd, model);
         start
-            .then((v) => { if (!cancelled) { setSession(v); onSession?.(v); } })
+            // onSession fires even if we've navigated away, so the thread card
+            // always gets its session id (never orphaned). setSession is still
+            // guarded so we don't touch an unmounted panel.
+            .then((v) => { onSession?.(v); if (!cancelled) setSession(v); })
             .catch((e) => { if (!cancelled) setError(String(e)); })
             .finally(() => { if (!cancelled) setBusy(null); });
         return () => { cancelled = true; };

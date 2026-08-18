@@ -18,6 +18,7 @@ import type { SessionMetrics } from '../../types';
 /** One entry in the Agents conversation thread. */
 type ChatMsg =
     | { id: string; role: 'user'; text: string }
+    | { id: string; role: 'assistant'; kind: 'text'; text: string }
     | { id: string; role: 'assistant'; kind: 'route'; response: DirectResponse }
     | { id: string; role: 'assistant'; kind: 'plan'; prompt: string; sessionId?: string; goal?: string; status?: string };
 
@@ -261,7 +262,6 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     const [thread, setThread] = useState<ChatMsg[]>([]);
     const [openMsgId, setOpenMsgId] = useState<string | null>(null);
     const msgIdc = useRef(0);
-    const activePlanMsgId = useRef<string | null>(null);
     const nextMsgId = () => `m${msgIdc.current++}`;
 
     // A direct Q&A is one exchange (question + answer). A task is ONE plan card —
@@ -278,7 +278,6 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
     // and open it in the side panel. Each task is its own message (no overwrite).
     const handleSmartTask = useCallback((prompt: string, useGsd: boolean) => {
         const id = nextMsgId();
-        activePlanMsgId.current = id;
         setThread((t) => [...t, { id, role: 'assistant', kind: 'plan', prompt }]);
         setOpenMsgId(id);
         setPlanUseGsd(useGsd);
@@ -286,17 +285,82 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         setPlanTask(prompt);
     }, []);
 
-    // When a plan's session is created, link it back to its thread card so the
-    // card can reopen it later and show its goal/status.
+    // When a plan's session is created, link it to its card by matching the
+    // prompt (the session's `task`) — robust to starting/switching tasks fast.
     const handlePlanSession = useCallback((view: SessionView) => {
-        const id = activePlanMsgId.current;
-        if (!id) return;
-        setThread((t) => t.map((m) =>
-            m.id === id && m.role === 'assistant' && m.kind === 'plan'
-                ? { ...m, sessionId: view.session_id, goal: view.plan?.goal, status: view.status }
-                : m));
-        activePlanMsgId.current = null;
+        setThread((t) => {
+            const idx = t.findIndex((m) =>
+                m.role === 'assistant' && m.kind === 'plan' && !m.sessionId && m.prompt === view.task);
+            if (idx < 0) return t;
+            const copy = [...t];
+            const m = copy[idx];
+            if (m.role === 'assistant' && m.kind === 'plan') {
+                copy[idx] = { ...m, sessionId: view.session_id, goal: view.plan?.goal, status: view.status };
+            }
+            return copy;
+        });
     }, []);
+
+    // Launch N embedded agent sessions of a given type (used by both the
+    // launcher and natural-language commands like "launch 3 claude sessions").
+    const launchEmbedded = useCallback(async (agentType: string, count: number): Promise<number> => {
+        const launched: AgentSession[] = [];
+        for (let i = 0; i < count; i++) {
+            const sessionId = crypto.randomUUID();
+            await tm.create(sessionId, (status) => {
+                setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, status } : s)));
+                if (status === 'stopped') {
+                    invokeCommand<SessionMetrics | null>('get_session_metrics', { sessionId })
+                        .then((m) => { if (m) setSessionMetrics((prev) => new Map(prev).set(sessionId, m)); })
+                        .catch(() => {});
+                }
+            });
+            const session = await invokeCommand<AgentSession>('launch_embedded_session', {
+                agentType, projectId, projectPath, model: null, instructions: null,
+                injectContext: true, taskMode: null, sessionId, rows: null, cols: null,
+            });
+            embeddedSessionIds.add(session.id);
+            launched.push(session);
+        }
+        setSessions((prev) => [...prev, ...launched]);
+        return launched.length;
+    }, [projectId, projectPath, embeddedSessionIds]);
+
+    // Recognize and execute app-command intents. Returns true if handled.
+    const handleLocalCommand = useCallback((q: string): boolean => {
+        const s = q.toLowerCase().trim();
+        const say = (text: string) => setThread((t) => [
+            ...t,
+            { id: nextMsgId(), role: 'user', text: q },
+            { id: nextMsgId(), role: 'assistant', kind: 'text', text },
+        ]);
+
+        // "launch/spawn/start/open N <claude|codex|terminal> sessions/agents/terminals"
+        const m = s.match(/(?:launch|spawn|start|open)\s+(\d+)?\s*(claude|codex|terminal)?\s*(?:code|cli)?\s*(?:sessions?|agents?|terminals?)/);
+        if (m) {
+            const count = Math.min(Math.max(parseInt(m[1] ?? '1', 10) || 1, 1), 6);
+            const agent = m[2] === 'codex' ? 'codex' : m[2] === 'terminal' ? 'custom' : 'claude';
+            const label = agent === 'custom' ? 'terminal' : agent;
+            say(`Launching ${count} ${label} session${count > 1 ? 's' : ''}…`);
+            launchEmbedded(agent, count)
+                .then((n) => { toast.success(`Launched ${n} ${label} session${n > 1 ? 's' : ''}`); setView('grid'); })
+                .catch((e) => toast.error(`Launch failed: ${e}`));
+            return true;
+        }
+        // "open (in) editor"
+        if (/open\s+(?:in\s+)?(?:the\s+)?editor/.test(s)) {
+            say('Opening the project in your editor…');
+            handleOpenEditor();
+            return true;
+        }
+        // "show/view the grid | terminals"
+        if (/(?:show|view|open)\s+(?:the\s+)?(?:grid|terminals?)/.test(s)) {
+            setView('grid');
+            return true;
+        }
+        return false;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [launchEmbedded]);
 
     // Keep each plan card's status + goal in sync with the persisted summaries,
     // so the single card updates in place (planning → reviewing → done).
@@ -389,6 +453,29 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     </>
                 ) : (
                     <div className="flex-1 flex flex-col min-h-0">
+                        {/* Persistent header — always reach the terminals + launch a new one */}
+                        <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border">
+                            <Bot className="w-3.5 h-3.5 text-muted-foreground/60" />
+                            <span className="text-[11px] font-medium text-muted-foreground">Agents</span>
+                            <div className="flex-1" />
+                            {allEmbeddedIds.length > 0 && (
+                                <button
+                                    onClick={() => { setPlanTask(null); setPlanReopenId(null); setView('grid'); }}
+                                    className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-foreground/6 transition-colors"
+                                    title="View the terminal sessions you've launched"
+                                >
+                                    <LayoutGrid className="w-3.5 h-3.5" /> Terminals
+                                    <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium tabular-nums">{activeEmbeddedIds.length}</span>
+                                </button>
+                            )}
+                            <button
+                                onClick={() => { setPlanTask(null); setPlanReopenId(null); launchEmbedded('claude', 1).then(() => setView('grid')).catch((e) => toast.error(`Launch failed: ${e}`)); }}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                                title="Launch a new Claude session"
+                            >
+                                <Plus className="w-3.5 h-3.5" /> New
+                            </button>
+                        </div>
                         <div className="flex-1 overflow-y-auto hide-scrollbar">
                         <div className={planActive ? "p-4 space-y-3" : "max-w-3xl mx-auto p-6 space-y-3"}>
                             {/* Conversation thread */}
@@ -402,6 +489,10 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                 m.role === 'user' ? (
                                     <div key={m.id} className="flex justify-end">
                                         <div className="max-w-[85%] rounded-2xl bg-foreground text-background px-3.5 py-2 text-[13px] whitespace-pre-wrap">{m.text}</div>
+                                    </div>
+                                ) : m.kind === 'text' ? (
+                                    <div key={m.id} className="flex justify-start">
+                                        <div className="max-w-[85%] rounded-2xl bg-muted/40 text-foreground/85 px-3.5 py-2 text-[13px] whitespace-pre-wrap">{m.text}</div>
                                     </div>
                                 ) : m.kind === 'route' ? (
                                     <RouteResultView key={m.id} response={m.response} />
@@ -705,6 +796,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     projectPath={projectPath}
                                     onSpawnTask={handleSmartTask}
                                     onDirectResult={handleDirectResult}
+                                    onLocalCommand={handleLocalCommand}
                                 />
                             </div>
                         </div>

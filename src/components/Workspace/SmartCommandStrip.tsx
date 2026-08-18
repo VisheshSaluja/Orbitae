@@ -48,6 +48,9 @@ interface SmartCommandStripProps {
     onSpawnTask: (prompt: string, useGsd: boolean) => void;
     /** Called with a direct (zero-token) answer + the question — for the thread. */
     onDirectResult?: (query: string, response: DirectResponse) => void;
+    /** Intercept app-command intents (launch sessions, open editor…) before
+     *  routing. Return true if the command was handled. */
+    onLocalCommand?: (query: string) => boolean;
 }
 
 const ROUTE_ICONS: Record<string, React.ElementType> = {
@@ -69,6 +72,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
     projectPath,
     onSpawnTask,
     onDirectResult,
+    onLocalCommand,
 }) => {
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
@@ -111,9 +115,13 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
         const trimmed = query.trim();
         if (!trimmed || loading) return;
 
+        setQuery('');
+        // App-command intents (launch sessions, open editor…) execute directly
+        // rather than routing to a read or a plan.
+        if (onLocalCommand?.(trimmed)) return;
+
         setLoading(true);
         setResult(null);
-        setQuery('');
 
         try {
             const response = await invokeCommand<RouteResponse>('route_request', {

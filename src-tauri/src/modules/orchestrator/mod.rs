@@ -27,3 +27,4 @@ pub mod skills;
 pub mod sqlite_store;
 pub mod store;
 pub mod validation;
+pub mod worktree;
