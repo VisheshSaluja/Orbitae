@@ -8,7 +8,7 @@ import {
     Play, Square, Bot, Zap, Monitor, ExternalLink,
     Plus, RefreshCw, Clock, FileCode, GitBranch,
     X, Eye, Globe, ChevronDown, ChevronRight, ArrowLeft, LayoutGrid,
-    ListChecks,
+    ListChecks, Wrench,
 } from 'lucide-react';
 import { TerminalGrid } from './TerminalGrid';
 import { SmartCommandStrip, RouteResultView, type DirectResponse } from './SmartCommandStrip';
@@ -22,6 +22,7 @@ type ChatMsg =
     | { id: string; role: 'user'; text: string }
     | { id: string; role: 'assistant'; kind: 'text'; text: string }
     | { id: string; role: 'assistant'; kind: 'route'; response: DirectResponse }
+    | { id: string; role: 'assistant'; kind: 'tool'; tool: string }
     | { id: string; role: 'assistant'; kind: 'plan'; prompt: string; sessionId?: string; goal?: string; status?: string };
 
 interface AgentSession {
@@ -307,9 +308,13 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                     const mapped = t.map((m): ChatMsg => (m.id === aid
                         ? { id: aid, role: 'assistant', kind: 'text', text: ans.reply || (ans.plan_goal ? 'Putting together a plan…' : '') }
                         : m));
-                    return ans.reply.trim() === '' && !ans.plan_goal
+                    const base = ans.reply.trim() === '' && !ans.plan_goal
                         ? mapped.filter((m) => m.id !== aid)
                         : mapped;
+                    // Surface the agent's tool call as a small chip before the plan card.
+                    return ans.plan_goal
+                        ? [...base, { id: nextMsgId(), role: 'assistant', kind: 'tool', tool: 'create_plan' } as ChatMsg]
+                        : base;
                 });
                 if (ans.plan_goal) handleSmartTask(ans.plan_goal, false);
             })
@@ -548,6 +553,12 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     </div>
                                 ) : m.kind === 'route' ? (
                                     <RouteResultView key={m.id} response={m.response} />
+                                ) : m.kind === 'tool' ? (
+                                    <div key={m.id} className="flex justify-center">
+                                        <div className="inline-flex items-center gap-1.5 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10px] font-medium text-violet-400">
+                                            <Wrench className="w-3 h-3" /> called <span className="font-mono">{m.tool}</span>
+                                        </div>
+                                    </div>
                                 ) : (
                                     <button key={m.id}
                                         onClick={() => { if (m.sessionId) { setOpenMsgId(m.id); setPlanTask(null); setPlanReopenId(m.sessionId); } }}
