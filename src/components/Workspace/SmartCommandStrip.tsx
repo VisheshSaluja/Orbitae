@@ -51,6 +51,8 @@ interface SmartCommandStripProps {
     /** Intercept app-command intents (launch sessions, open editor…) before
      *  routing. Return true if the command was handled. */
     onLocalCommand?: (query: string) => boolean;
+    /** Answer a question conversationally (no plan) — for non-build queries. */
+    onAsk?: (query: string) => void;
 }
 
 const ROUTE_ICONS: Record<string, React.ElementType> = {
@@ -73,6 +75,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
     onSpawnTask,
     onDirectResult,
     onLocalCommand,
+    onAsk,
 }) => {
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
@@ -137,12 +140,13 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                     else setResult(response);
                     break;
 
-                // For anything complex, always plan the USER'S actual query —
-                // never a canned route template (that legacy behavior threw the
-                // real request away and planned the wrong thing).
+                // Conversation-first: everything goes to the chat agent, which
+                // decides for itself whether to answer or to invoke its
+                // `create_plan` tool. No client-side guessing, no Plan button.
                 case 'orchestrate':
                 case 'fallback':
-                    onSpawnTask(trimmed, useGsd);
+                    if (onAsk) onAsk(trimmed);
+                    else onSpawnTask(trimmed, useGsd);
                     break;
             }
         } catch (err) {
@@ -211,6 +215,7 @@ export const SmartCommandStrip: React.FC<SmartCommandStripProps> = ({
                 ) : query.trim() ? (
                     <button
                         onClick={handleSubmit}
+                        title="Send (chat)"
                         className="p-1 rounded-md text-foreground/60 hover:text-foreground hover:bg-foreground/6 transition-colors"
                     >
                         <Send className="w-3.5 h-3.5" />

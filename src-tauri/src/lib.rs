@@ -63,6 +63,9 @@ pub fn run() {
               tracing::warn!("failed to reconcile executing plans: {}", e);
           }
 
+          // Remove any isolated worktree checkouts leaked by a previous crash.
+          modules::orchestrator::worktree::cleanup_temp_dirs();
+
           app_handle.manage(pool);
       });
 
@@ -75,6 +78,11 @@ pub fn run() {
       let orchestrator_sessions: modules::orchestrator::commands::PlanSessionMap =
           Arc::new(Mutex::new(HashMap::new()));
       app_handle.manage(orchestrator_sessions);
+
+      // Per-project chat conversation registry (multi-turn, remembers context).
+      let orchestrator_chats: modules::orchestrator::commands::ChatMap =
+          Arc::new(Mutex::new(HashMap::new()));
+      app_handle.manage(orchestrator_chats);
 
       if let Err(e) = modules::mcp::service::McpService::ensure_token() {
           tracing::warn!("Failed to provision MCP auth token: {}", e);
@@ -169,6 +177,8 @@ pub fn run() {
         modules::router::commands::route_request,
         // Orchestrator (plan-first)
         modules::orchestrator::commands::orchestrator_list_skills,
+        modules::orchestrator::commands::orchestrator_chat,
+        modules::orchestrator::commands::orchestrator_quick_ask,
         modules::orchestrator::commands::orchestrator_validate,
         modules::orchestrator::commands::orchestrator_apply_review_comments,
         modules::orchestrator::commands::orchestrator_save_annotations,

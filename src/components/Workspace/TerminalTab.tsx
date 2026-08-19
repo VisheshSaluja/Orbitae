@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { invokeCommand } from '../../lib/tauri';
 import * as tm from '../../lib/terminalManager';
 import { toast } from 'sonner';
@@ -54,6 +56,8 @@ interface ListeningPort {
 interface SessionsTabProps {
     projectId: string;
     projectPath: string;
+    /** Bumped when the Agents tab is re-clicked — return to the conversation home. */
+    resetSignal?: number;
 }
 
 const AGENT_TYPES = [
@@ -74,7 +78,7 @@ function formatElapsed(createdAt: string): string {
     return `${Math.floor(hours / 24)}d`;
 }
 
-export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath }) => {
+export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath, resetSignal }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
     const [showLauncher, setShowLauncher] = useState(false);
     const [isLaunching, setIsLaunching] = useState(false);
@@ -274,8 +278,11 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         ]);
     }, []);
 
-    // Complex queries enter the plan-first loop: append a plan card to the thread
-    // and open it in the side panel. Each task is its own message (no overwrite).
+    // A conversational message — send it to the persistent multi-turn chat
+    // (remembers context), with a live placeholder. No plan.
+    // A task enters the plan-first loop: append a plan card to the thread and open
+    // it in the side panel. Each task is its own message (no overwrite). Invoked
+    // both by explicit task entry and by the chat agent's own `create_plan` tool.
     const handleSmartTask = useCallback((prompt: string, useGsd: boolean) => {
         const id = nextMsgId();
         setThread((t) => [...t, { id, role: 'assistant', kind: 'plan', prompt }]);
@@ -284,6 +291,30 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
         setPlanReopenId(null);
         setPlanTask(prompt);
     }, []);
+
+    const handleAsk = useCallback((q: string) => {
+        const aid = nextMsgId();
+        setThread((t) => [
+            ...t,
+            { id: nextMsgId(), role: 'user', text: q },
+            { id: aid, role: 'assistant', kind: 'text', text: '…' },
+        ]);
+        orch.chat(projectId, projectPath, q)
+            .then((ans) => {
+                // If the reply is only a plan directive (no prose), drop the empty
+                // bubble; otherwise show the prose. The agent decided to plan.
+                setThread((t) => {
+                    const mapped = t.map((m): ChatMsg => (m.id === aid
+                        ? { id: aid, role: 'assistant', kind: 'text', text: ans.reply || (ans.plan_goal ? 'Putting together a plan…' : '') }
+                        : m));
+                    return ans.reply.trim() === '' && !ans.plan_goal
+                        ? mapped.filter((m) => m.id !== aid)
+                        : mapped;
+                });
+                if (ans.plan_goal) handleSmartTask(ans.plan_goal, false);
+            })
+            .catch((e) => setThread((t) => t.map((m): ChatMsg => (m.id === aid ? { id: aid, role: 'assistant', kind: 'text', text: `Couldn't answer: ${e}` } : m))));
+    }, [projectId, projectPath, handleSmartTask]);
 
     // When a plan's session is created, link it to its card by matching the
     // prompt (the session's `task`) — robust to starting/switching tasks fast.
@@ -372,6 +403,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
             return s ? { ...m, goal: s.goal ?? m.goal, status: s.status } : m;
         }));
     }, [planSummaries]);
+
+    // Re-clicking the Agents tab returns to the conversation home (close any open
+    // plan/grid) without losing the thread.
+    useEffect(() => {
+        if (resetSignal === undefined) return;
+        setPlanTask(null);
+        setPlanReopenId(null);
+        setOpenMsgId(null);
+        setShowLauncher(false);
+        setView('dashboard');
+    }, [resetSignal]);
 
     const runningSessions = sessions.filter(s => s.status === 'running');
     const stoppedSessions = sessions.filter(s => s.status !== 'running');
@@ -492,7 +534,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     </div>
                                 ) : m.kind === 'text' ? (
                                     <div key={m.id} className="flex justify-start">
-                                        <div className="max-w-[85%] rounded-2xl bg-muted/40 text-foreground/85 px-3.5 py-2 text-[13px] whitespace-pre-wrap">{m.text}</div>
+                                        <div className="max-w-[90%] rounded-2xl bg-muted/40 px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground/85
+                                            [&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5
+                                            [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:font-semibold
+                                            [&_code]:bg-foreground/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[12px] [&_code]:font-mono
+                                            [&_pre]:bg-foreground/[0.06] [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_pre]:text-[12px] [&_pre]:my-1.5
+                                            [&_a]:text-sky-500 [&_a]:underline [&_strong]:font-semibold
+                                            [&_table]:w-full [&_table]:text-[12px] [&_th]:text-left [&_th]:font-semibold [&_th]:pr-3 [&_td]:pr-3">
+                                            {m.text === '…'
+                                                ? <span className="text-muted-foreground/50 animate-pulse">Thinking…</span>
+                                                : <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>}
+                                        </div>
                                     </div>
                                 ) : m.kind === 'route' ? (
                                     <RouteResultView key={m.id} response={m.response} />
@@ -797,6 +849,7 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
                                     onSpawnTask={handleSmartTask}
                                     onDirectResult={handleDirectResult}
                                     onLocalCommand={handleLocalCommand}
+                                    onAsk={handleAsk}
                                 />
                             </div>
                         </div>

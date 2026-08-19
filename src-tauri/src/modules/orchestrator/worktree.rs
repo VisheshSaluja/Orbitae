@@ -58,6 +58,14 @@ impl Worktree {
         &self.path
     }
 
+    /// Consume the handle WITHOUT removing the checkout — the caller now owns its
+    /// lifecycle (persist the path, remove later via [`remove_at`]). Used when a
+    /// worktree must outlive one function (execute → review → PR).
+    pub fn into_path(mut self) -> PathBuf {
+        self.removed = true;
+        self.path.clone()
+    }
+
     /// Remove the worktree registration and its checkout (best effort, idempotent).
     pub fn remove(&mut self) {
         if self.removed {
@@ -77,6 +85,46 @@ impl Worktree {
 impl Drop for Worktree {
     fn drop(&mut self) {
         self.remove();
+    }
+}
+
+// ---- persisted-lifecycle helpers (worktree outlives one function) ----------
+
+/// Create a disposable detached worktree at the repo's current `HEAD`, pruning
+/// any stale registrations first. Returns the checkout path as a string; the
+/// caller owns its lifecycle (persist it, remove with [`remove_at`]).
+pub fn create_isolated(repo: &str) -> Result<String> {
+    prune(repo);
+    let wt = Worktree::create_at(repo, "HEAD")?;
+    Ok(wt.into_path().to_string_lossy().into_owned())
+}
+
+/// Remove a worktree at `path` from `repo` (registration + checkout).
+pub fn remove_at(repo: &str, path: &str) {
+    let _ = Command::new("git")
+        .args(["worktree", "remove", "--force", path])
+        .current_dir(repo)
+        .output();
+    let _ = std::fs::remove_dir_all(path);
+}
+
+/// Prune stale worktree registrations (checkouts removed out from under git).
+pub fn prune(repo: &str) {
+    let _ = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo)
+        .output();
+}
+
+/// Remove leftover worktree checkouts from previous runs — temp dirs whose name
+/// carries our prefix. Safe at startup: no session is mid-run then.
+pub fn cleanup_temp_dirs() {
+    if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("orbitae-wt-") && e.path().is_dir() {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
     }
 }
 

@@ -151,8 +151,8 @@ export interface ReviewComment {
 
 /** Apply a batch of human review comments to the working tree via an agent.
  *  `intent` (the plan goal) gives the agent context for terse comments. */
-export function applyReviewComments(projectPath: string, comments: ReviewComment[], intent?: string): Promise<string> {
-    return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, comments, intent: intent ?? null });
+export function applyReviewComments(projectPath: string, sessionId: string, comments: ReviewComment[], intent?: string): Promise<string> {
+    return invokeCommand<string>('orchestrator_apply_review_comments', { projectPath, sessionId, comments, intent: intent ?? null });
 }
 
 /** The approved change boundary the gate enforces against. */
@@ -195,8 +195,27 @@ export interface PrResult {
 }
 
 /** Commit the change under the user's identity and open a PR (never merges). */
-export function createPr(projectPath: string, title: string, body: string): Promise<PrResult> {
-    return invokeCommand<PrResult>('orchestrator_create_pr', { projectPath, title, body });
+export function createPr(projectPath: string, sessionId: string, title: string, body: string): Promise<PrResult> {
+    return invokeCommand<PrResult>('orchestrator_create_pr', { projectPath, sessionId, title, body });
+}
+
+/** One chat turn's result. `planGoal` is set when the agent decided the developer
+ *  wants to build something and invoked its `create_plan` tool — the UI then
+ *  spawns a plan card for that goal. Otherwise it's just conversational prose. */
+export interface ChatReply {
+    reply: string;
+    plan_goal: string | null;
+}
+
+/** Send a message to the project's persistent, multi-turn chat conversation.
+ *  The agent decides on its own whether to answer or to create a plan. */
+export function chat(projectId: string, projectPath: string, message: string): Promise<ChatReply> {
+    return invokeCommand<ChatReply>('orchestrator_chat', { projectId, projectPath, message });
+}
+
+/** Answer a one-off question about the project conversationally — no plan. */
+export function quickAsk(projectId: string, projectPath: string, question: string): Promise<string> {
+    return invokeCommand<string>('orchestrator_quick_ask', { projectId, projectPath, question });
 }
 
 /** Start a plan-first session and produce the first plan for a task. */

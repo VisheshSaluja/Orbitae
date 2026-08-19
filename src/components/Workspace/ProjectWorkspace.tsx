@@ -39,6 +39,8 @@ interface CommandAction {
 
 export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose }) => {
     const [activeTab, setActiveTab] = useState('agents');
+    // Bumped when the already-active tab is re-clicked → the panel resets to home.
+    const [homeNonce, setHomeNonce] = useState(0);
     const [paletteOpen, setPaletteOpen] = useState(false);
     const [paletteQuery, setPaletteQuery] = useState('');
     const [paletteIndex, setPaletteIndex] = useState(0);
@@ -143,7 +145,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     const panelContent = useMemo(() => {
         switch (activeTab) {
             case 'agents':
-                return <TerminalTab projectId={project.id} projectPath={project.path} />;
+                return <TerminalTab projectId={project.id} projectPath={project.path} resetSignal={homeNonce} />;
             case 'context':
                 return <ContextPanel projectId={project.id} projectPath={project.path} />;
             case 'connect':
@@ -151,7 +153,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
             default:
                 return null;
         }
-    }, [activeTab, project]);
+    }, [activeTab, project, homeNonce]);
 
     return (
         <div className="flex flex-col h-screen bg-background">
@@ -184,7 +186,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
                     return (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => { if (activeTab === tab.id) setHomeNonce(n => n + 1); else setActiveTab(tab.id); }}
                             className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
                                 isActive
                                     ? 'text-foreground'

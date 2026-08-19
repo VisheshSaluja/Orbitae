@@ -18,9 +18,9 @@ use super::plan_ops::StepEdit;
 use super::planner::lite::LitePlanner;
 use super::session::{BeginParams, PlanSession};
 use super::sqlite_store::{
-    delete_session, get_annotations, get_base_tree, get_boundary, list_plan_summaries,
-    load_session, save_annotations, save_base_tree, save_boundary, save_execution, PlanSummary,
-    SqliteStore,
+    clear_worktree_path, delete_session, get_annotations, get_base_tree, get_boundary,
+    get_worktree_path, list_plan_summaries, load_session, save_annotations, save_base_tree,
+    save_boundary, save_execution, save_worktree_path, PlanSummary, SqliteStore,
 };
 use crate::modules::agent_sessions::commands::resolve_task_permission_mode;
 use crate::modules::agent_sessions::events::TaskPermissionMode;
@@ -61,6 +61,48 @@ fn format_exec_event(ev: &BackendEvent) -> String {
 
 /// In-memory registry of live orchestration sessions, each independently locked.
 pub type PlanSessionMap = Arc<Mutex<HashMap<String, Arc<Mutex<PlanSession>>>>>;
+
+/// In-memory registry of the per-project **chat conversation** — a persistent,
+/// multi-turn agent conversation (remembers context) that the developer talks to
+/// before deciding to create a plan.
+pub type ChatMap = Arc<Mutex<HashMap<String, Arc<Mutex<super::conversation::Conversation>>>>>;
+
+/// The reply from one chat turn. The conversational agent decides for itself when
+/// the developer wants to *build* something and invokes its `create_plan` tool by
+/// emitting the [`PLAN_DIRECTIVE`] marker; when it does, `plan_goal` carries the
+/// distilled goal and the frontend spawns a plan card. Otherwise it's just prose.
+#[derive(serde::Serialize)]
+pub struct ChatReply {
+    pub reply: String,
+    pub plan_goal: Option<String>,
+}
+
+/// The sentinel the chat agent emits to invoke its `create_plan` tool. The app
+/// owns the chat process and parses its stream, so this marker *is* the tool
+/// call — no MCP round-trip for an in-process action. Chosen to never collide
+/// with prose or code.
+const PLAN_DIRECTIVE: &str = "%%CREATE_PLAN%%";
+
+/// Split a chat reply into (prose-to-show, optional plan goal). If the agent
+/// emitted the `create_plan` directive on a line, that line is stripped from the
+/// visible prose and its goal returned.
+fn split_plan_directive(text: &str) -> (String, Option<String>) {
+    let mut goal: Option<String> = None;
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| match line.find(PLAN_DIRECTIVE) {
+            Some(idx) => {
+                let g = line[idx + PLAN_DIRECTIVE.len()..].trim();
+                if !g.is_empty() {
+                    goal = Some(g.to_string());
+                }
+                false // drop the directive line from the shown reply
+            }
+            None => true,
+        })
+        .collect();
+    (kept.join("\n").trim().to_string(), goal)
+}
 
 /// A snapshot of a session for the frontend.
 #[derive(serde::Serialize)]
@@ -121,6 +163,18 @@ where
     })
     .await
     .map_err(|e| format!("task join: {e}"))?
+}
+
+/// The directory to operate on for a session: its **isolated worktree** if one
+/// exists (and is still on disk), else the project path. Ensures review, comment
+/// application, and PR creation all act on the same tree the agents wrote to.
+async fn effective_cwd(pool: &SqlitePool, session_id: &str, project_path: &str) -> String {
+    if let Ok(Some(wt)) = get_worktree_path(pool, session_id).await {
+        if std::path::Path::new(&wt).exists() {
+            return wt;
+        }
+    }
+    crate::shared::utils::expand_path(project_path)
 }
 
 /// Start a plan-first session: produce the first plan for a task.
@@ -237,21 +291,36 @@ pub async fn orchestrator_execute(
         .map_err(|e| format!("task join: {e}"))??
     };
 
-    // 1.5 Snapshot the pre-execution tree so validation can diff ONLY what this
-    //     run produces (new files included, pre-existing WIP excluded). Best
-    //     effort — a missing baseline just falls back to `git diff HEAD`.
-    let snap_cwd = config.cwd.clone();
-    let base_tree = tokio::task::spawn_blocking(move || super::validation::snapshot_tree(&snap_cwd))
-        .await
-        .ok()
-        .flatten();
+    // 1.5 Isolate execution in a disposable worktree so a run never dirties the
+    //     developer's main working tree; snapshot its baseline so review sees
+    //     only what the run produces. Best-effort — if worktree setup fails, run
+    //     in the project directory (no regression).
+    let project_cwd = config.cwd.clone();
+    let (exec_cwd, base_tree, worktree_path) = tokio::task::spawn_blocking(move || {
+        match super::worktree::create_isolated(&project_cwd) {
+            Ok(wt) => {
+                let base = super::validation::snapshot_tree(&wt);
+                (wt.clone(), base, Some(wt))
+            }
+            Err(_) => {
+                let base = super::validation::snapshot_tree(&project_cwd);
+                (project_cwd.clone(), base, None)
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?;
     if let Some(base) = base_tree.as_deref() {
         let _ = save_base_tree(pool.inner(), &session_id, base).await;
     }
+    if let Some(ref wt) = worktree_path {
+        let _ = save_worktree_path(pool.inner(), &session_id, wt).await;
+    }
 
-    // Captured before `config`/`plan` are moved into execution — needed to
-    // assemble the structured result afterward.
-    let result_cwd = config.cwd.clone();
+    // Execution runs in the isolated worktree; the plan's file paths are the same
+    // relative paths there.
+    let config = SessionConfig { cwd: exec_cwd.clone(), ..config };
+    let result_cwd = exec_cwd.clone();
     let goal = plan.goal.clone();
 
     // 2. Run the long execution WITHOUT holding the session lock, so reads
@@ -335,6 +404,147 @@ pub async fn orchestrator_list_skills() -> Result<Vec<super::models::SkillDef>, 
     Ok(super::skills::builtin_skills())
 }
 
+/// Send a message to the project's **persistent chat conversation** and get the
+/// reply. Multi-turn: the conversation remembers context, so the developer can
+/// brainstorm, ask, and iterate before deciding to create a plan. Read-only —
+/// the agent discusses and answers but does not modify files (that happens later
+/// via an approved plan).
+#[command]
+pub async fn orchestrator_chat(
+    chats: State<'_, ChatMap>,
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+    project_path: String,
+    message: String,
+) -> Result<ChatReply, String> {
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_content(&message, "message").map_err(|e| e.to_string())?;
+
+    // Reuse the live conversation if one exists; else create + prime it once.
+    let existing = {
+        let guard = chats.inner().lock().map_err(|e| format!("chat registry lock: {e}"))?;
+        guard.get(&project_id).cloned()
+    };
+    let convo = match existing {
+        Some(c) => c,
+        None => {
+            let permission_mode = resolve_task_permission_mode(pool.inner(), &project_id).await;
+            let context = crate::modules::agent_sessions::context::build_project_context(
+                pool.inner(),
+                &project_id,
+                &project_path,
+            )
+            .await
+            .ok();
+            let cwd = crate::shared::utils::expand_path(&project_path);
+            let created = tokio::task::spawn_blocking(
+                move || -> Result<Arc<Mutex<super::conversation::Conversation>>, String> {
+                    let config = SessionConfig { cwd, model: Some("sonnet".to_string()), permission_mode };
+                    let convo = super::conversation::Conversation::start(&ClaudeBackend, config)
+                        .map_err(|e| e.to_string())?;
+                    let tool_contract = format!(
+                        "You have one tool: create_plan. When — and ONLY when — the developer \
+                         clearly wants you to build, implement, add, change, refactor, or fix \
+                         something concrete (not merely discuss, ask about, or explore it), \
+                         invoke it by ending your reply with a final line in exactly this form:\n\
+                         {PLAN_DIRECTIVE} <a single-line, specific goal>\n\
+                         For questions, explanations, brainstorming, or exploration, do NOT emit \
+                         it — just reply normally. Never modify files yourself; a plan (reviewed \
+                         and approved by the developer) is how changes happen. You may run \
+                         read-only commands to check facts."
+                    );
+                    let primer = match context.as_deref() {
+                        Some(ctx) if !ctx.trim().is_empty() => format!(
+                            "You are the developer's assistant for this project. Discuss ideas, \
+                             brainstorm, answer questions, and help plan. {tool_contract} \
+                             Here is the project context; rely on it. Reply only \"ok\".\n\n{ctx}"
+                        ),
+                        _ => format!(
+                            "You are the developer's assistant for this project. Discuss, \
+                             brainstorm, answer questions, and help plan. {tool_contract} \
+                             Reply only \"ok\"."
+                        ),
+                    };
+                    let _ = convo.ask(&primer);
+                    Ok(Arc::new(Mutex::new(convo)))
+                },
+            )
+            .await
+            .map_err(|e| format!("task join: {e}"))??;
+            chats
+                .inner()
+                .lock()
+                .map_err(|e| format!("chat registry lock: {e}"))?
+                .insert(project_id.clone(), created.clone());
+            created
+        }
+    };
+
+    tokio::task::spawn_blocking(move || -> Result<ChatReply, String> {
+        let g = convo.lock().map_err(|e| format!("chat lock: {e}"))?;
+        let out = g.ask(&message).map_err(|e| e.to_string())?;
+        if out.is_error {
+            return Err(out.stderr.trim().to_string());
+        }
+        let (reply, plan_goal) = split_plan_directive(&out.text);
+        Ok(ChatReply { reply, plan_goal })
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
+/// Answer a developer's question about the project **conversationally** — a
+/// single read-only agent turn, no plan. For informational queries so they don't
+/// get the heavyweight plan-first flow.
+#[command]
+pub async fn orchestrator_quick_ask(
+    pool: State<'_, SqlitePool>,
+    project_id: String,
+    project_path: String,
+    question: String,
+) -> Result<String, String> {
+    validation::validate_id(&project_id).map_err(|e| e.to_string())?;
+    validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_content(&question, "question").map_err(|e| e.to_string())?;
+
+    let permission_mode = resolve_task_permission_mode(pool.inner(), &project_id).await;
+    let context = crate::modules::agent_sessions::context::build_project_context(
+        pool.inner(),
+        &project_id,
+        &project_path,
+    )
+    .await
+    .ok();
+    let cwd = crate::shared::utils::expand_path(&project_path);
+
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let config = SessionConfig { cwd, model: Some("sonnet".to_string()), permission_mode };
+        let convo = super::conversation::Conversation::start(&ClaudeBackend, config)
+            .map_err(|e| e.to_string())?;
+        if let Some(ctx) = context.as_deref() {
+            if !ctx.trim().is_empty() {
+                let _ = convo.ask(&format!(
+                    "Project context — rely on it instead of re-exploring; reply only \"ok\".\n\n{ctx}"
+                ));
+            }
+        }
+        let prompt = format!(
+            "Answer this question about the project concisely and directly. You may run \
+             read-only commands (git, ls, cat, grep) to check facts, but do NOT modify any \
+             files.\n\nQuestion: {question}"
+        );
+        let out = convo.ask(&prompt).map_err(|e| e.to_string())?;
+        let _ = convo.stop();
+        if out.is_error {
+            return Err(out.stderr.trim().to_string());
+        }
+        Ok(out.text)
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+}
+
 /// Run the bounded validation pass (deterministic checks + gated adversarial
 /// review) on a plan's changes, honoring the project's configured caps.
 #[command]
@@ -389,7 +599,8 @@ pub async fn orchestrator_validate(
     // review diff only what the run produced.
     let base_tree = get_base_tree(pool.inner(), &session_id).await.ok().flatten();
 
-    let cwd = crate::shared::utils::expand_path(&project_path);
+    // Review the isolated worktree the run executed in, not the main tree.
+    let cwd = effective_cwd(pool.inner(), &session_id, &project_path).await;
     tokio::task::spawn_blocking(move || -> Result<super::validation::ValidationReport, String> {
         let config = SessionConfig {
             cwd: cwd.clone(),
@@ -415,16 +626,20 @@ pub async fn orchestrator_validate(
 /// tree via a focused agent pass. The frontend re-runs validation afterward.
 #[command]
 pub async fn orchestrator_apply_review_comments(
+    pool: State<'_, SqlitePool>,
     project_path: String,
+    session_id: String,
     comments: Vec<super::validation::ReviewComment>,
     intent: Option<String>,
 ) -> Result<String, String> {
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
     if comments.is_empty() {
         return Err("no comments to apply".into());
     }
 
-    let cwd = crate::shared::utils::expand_path(&project_path);
+    // Apply in the same tree the run executed in (worktree if isolated).
+    let cwd = effective_cwd(pool.inner(), &session_id, &project_path).await;
     tokio::task::spawn_blocking(move || -> Result<String, String> {
         let config = SessionConfig {
             cwd: cwd.clone(),
@@ -442,22 +657,37 @@ pub async fn orchestrator_apply_review_comments(
 /// (never merges — the human is the merge gate).
 #[command]
 pub async fn orchestrator_create_pr(
+    pool: State<'_, SqlitePool>,
     project_path: String,
+    session_id: String,
     title: String,
     body: String,
 ) -> Result<super::pr::PrResult, String> {
     validation::validate_path(&project_path).map_err(|e| e.to_string())?;
+    validation::validate_id(&session_id).map_err(|e| e.to_string())?;
     validation::validate_content(&title, "title").map_err(|e| e.to_string())?;
     if title.trim().is_empty() {
         return Err("a title is required".into());
     }
 
-    let cwd = crate::shared::utils::expand_path(&project_path);
-    tokio::task::spawn_blocking(move || -> Result<super::pr::PrResult, String> {
+    // Commit from the isolated worktree (if any) — the branch lands in the shared
+    // repo; the main working tree is never touched.
+    let cwd = effective_cwd(pool.inner(), &session_id, &project_path).await;
+    let result = tokio::task::spawn_blocking(move || -> Result<super::pr::PrResult, String> {
         super::pr::create_pr(&super::pr::PrRequest { cwd, title, body }).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| format!("task join: {e}"))??;
+
+    // The change is now on a branch — dispose the worktree and clear it.
+    if result.committed {
+        if let Ok(Some(wt)) = get_worktree_path(pool.inner(), &session_id).await {
+            let project = crate::shared::utils::expand_path(&project_path);
+            let _ = tokio::task::spawn_blocking(move || super::worktree::remove_at(&project, &wt)).await;
+            let _ = clear_worktree_path(pool.inner(), &session_id).await;
+        }
+    }
+    Ok(result)
 }
 
 /// Persist the developer's pending plan annotations so they survive reopen.
@@ -542,6 +772,15 @@ pub async fn orchestrator_delete_plan(
             if let Ok(mut s) = sess.lock() {
                 let _ = s.cancel();
             }
+        })
+        .await;
+    }
+
+    // Dispose the session's isolated worktree, if any, before deleting it.
+    if let Ok(Some(wt)) = get_worktree_path(pool.inner(), &session_id).await {
+        let _ = tokio::task::spawn_blocking(move || {
+            // Prune from whichever repo owns it; the checkout dir is removed too.
+            let _ = std::fs::remove_dir_all(&wt);
         })
         .await;
     }
@@ -712,4 +951,38 @@ pub async fn orchestrator_cancel(
         .map_err(|e| format!("registry lock: {e}"))?
         .remove(&session_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::split_plan_directive;
+
+    #[test]
+    fn plain_prose_yields_no_goal() {
+        let (reply, goal) = split_plan_directive("Here's how /health works.\nIt returns ok.");
+        assert_eq!(reply, "Here's how /health works.\nIt returns ok.");
+        assert_eq!(goal, None);
+    }
+
+    #[test]
+    fn directive_is_extracted_and_stripped() {
+        let text = "Sure, I'll add readiness.\n%%CREATE_PLAN%% add a /health/ready endpoint that checks DB and Redis";
+        let (reply, goal) = split_plan_directive(text);
+        assert_eq!(reply, "Sure, I'll add readiness.");
+        assert_eq!(goal.as_deref(), Some("add a /health/ready endpoint that checks DB and Redis"));
+    }
+
+    #[test]
+    fn directive_only_reply_is_empty_prose() {
+        let (reply, goal) = split_plan_directive("%%CREATE_PLAN%% wire up rate limiting");
+        assert_eq!(reply, "");
+        assert_eq!(goal.as_deref(), Some("wire up rate limiting"));
+    }
+
+    #[test]
+    fn empty_goal_directive_is_ignored() {
+        let (reply, goal) = split_plan_directive("ok\n%%CREATE_PLAN%%   ");
+        assert_eq!(reply, "ok");
+        assert_eq!(goal, None);
+    }
 }

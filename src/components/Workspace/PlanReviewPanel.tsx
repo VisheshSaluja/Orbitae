@@ -321,7 +321,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!projectPath) return;
         setApplyingComments(true);
         try {
-            await orch.applyReviewComments(projectPath, comments, plan?.goal);
+            await orch.applyReviewComments(projectPath, sessionId!, comments, plan?.goal);
             toast.success('Comments applied — re-reviewing');
             await runValidation();
         } catch (e) {
@@ -370,7 +370,7 @@ export const PlanReviewPanel: React.FC<PlanReviewPanelProps> = ({
         if (!plan) return;
         setPrBusy(true);
         try {
-            const res = await orch.createPr(projectPath, plan.goal, buildReceipt(plan, report, execResult));
+            const res = await orch.createPr(projectPath, sessionId!, plan.goal, buildReceipt(plan, report, execResult));
             setPrResult(res);
             toast.success(res.pr_url ? 'PR opened' : res.message);
         } catch (e) {

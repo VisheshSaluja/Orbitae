@@ -343,6 +343,39 @@ pub async fn get_boundary(pool: &SqlitePool, session_id: &str) -> Result<Option<
         .filter(|s| !s.trim().is_empty()))
 }
 
+/// Record the disposable worktree a run executes in.
+pub async fn save_worktree_path(pool: &SqlitePool, session_id: &str, path: &str) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET worktree_path = ? WHERE id = ?")
+        .bind(path)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
+/// Read a session's worktree path, if it still has one.
+pub async fn get_worktree_path(pool: &SqlitePool, session_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT worktree_path FROM orch_sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| OrchestratorError::Database(e.to_string()))?;
+    Ok(row
+        .and_then(|r| r.get::<Option<String>, _>("worktree_path"))
+        .filter(|s| !s.trim().is_empty()))
+}
+
+/// Clear a session's worktree path (after the worktree has been removed).
+pub async fn clear_worktree_path(pool: &SqlitePool, session_id: &str) -> Result<()> {
+    sqlx::query("UPDATE orch_sessions SET worktree_path = NULL WHERE id = ?")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| OrchestratorError::Database(e.to_string()))
+}
+
 /// Mark plans left `executing` as `errored` — their run died with the app.
 pub async fn reconcile_executing(pool: &SqlitePool) -> Result<u64> {
     let r = sqlx::query("UPDATE orch_sessions SET status = 'errored' WHERE status = 'executing'")
