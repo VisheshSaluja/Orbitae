@@ -133,14 +133,14 @@ export default function Home() {
                     className="px-8 py-4 bg-white text-black text-lg font-bold rounded-full shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)] transition-shadow flex items-center gap-3"
                  >
                     <Terminal className="w-5 h-5" />
-                    Play Around
+                    Watch the Flow
                  </motion.button>
                  <div className="mt-6 flex flex-col items-center gap-1">
                     <p className="text-neutral-400 text-sm font-medium">
-                        Interactive Demo • No account required
+                        See the integrity gate in action • No account required
                     </p>
                     <p className="text-neutral-600 text-xs max-w-sm text-center">
-                        (This is a simulated demo version running in your browser. It does not access your actual filesystem or databases.)
+                        (A guided, simulated walkthrough running in your browser — chat to plan to verified pull request.)
                     </p>
                  </div>
               </motion.div>
