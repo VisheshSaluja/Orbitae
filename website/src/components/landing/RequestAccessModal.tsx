@@ -39,6 +39,8 @@ export function RequestAccessModal({ children }: RequestAccessModalProps) {
                 }, 3000);
             } else if (result.errors) {
                 setErrors(result.errors);
+            } else {
+                setErrors({ form: [result.message ?? 'Something went wrong. Please try again.'] });
             }
         } catch (error) {
             console.error(error);
@@ -68,11 +70,26 @@ export function RequestAccessModal({ children }: RequestAccessModalProps) {
                         </div>
                         <h3 className="text-xl font-semibold text-white">Request Received!</h3>
                         <p className="text-neutral-400 text-center max-w-xs">
-                            We'll review your application and send an invite to your email if you're a good fit.
+                            We&apos;ll review your application and send an invite to your email if you&apos;re a good fit.
                         </p>
                     </div>
                 ) : (
                     <form onSubmit={handleSubmit} className="space-y-4 py-4">
+                        {/* Honeypot — invisible to real visitors, bots that auto-fill every field catch themselves here. */}
+                        <input
+                            type="text"
+                            name="company_website"
+                            tabIndex={-1}
+                            autoComplete="off"
+                            aria-hidden="true"
+                            className="absolute w-px h-px opacity-0 -z-10"
+                        />
+                        {errors.form && (
+                            <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                                <AlertCircle className="w-4 h-4 shrink-0" />
+                                {errors.form[0]}
+                            </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="name">Full Name</Label>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, Terminal, Database, Lock, Layout, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowRight, Terminal, Lock, Layout, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { InteractiveDemo } from '../components/demo/InteractiveDemo';
 import { AIOrbit } from '../components/landing/AIOrbit';
@@ -13,12 +13,11 @@ export default function Home() {
   const [waitlistStatus, setWaitlistStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [isDemoActive, setIsDemoActive] = useState(false);
 
-  const handleWaitlistSubmit = async (e: React.FormEvent) => {
+  const handleWaitlistSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setWaitlistStatus('loading');
-    
-    const formData = new FormData();
-    formData.append('email', email);
+
+    const formData = new FormData(e.currentTarget);
 
     try {
         const result = await submitWaitlist({}, formData);
@@ -30,7 +29,8 @@ export default function Home() {
             setWaitlistStatus('error');
             console.error(result.error);
         }
-    } catch (e) {
+    } catch (err) {
+        console.error(err);
         setWaitlistStatus('error');
     }
   };
@@ -40,8 +40,14 @@ export default function Home() {
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 border-b border-white/10 bg-black/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xl tracking-tight text-white">
-            <div className="w-5 h-5 rounded-sm bg-white" />
+          <div className="flex items-center gap-2.5 font-bold text-xl tracking-tight text-white">
+            <svg viewBox="0 0 24 24" className="w-6 h-6 shrink-0" aria-hidden="true">
+              <g transform="rotate(-20 12 12)">
+                <ellipse cx="12" cy="12" rx="10" ry="4.2" fill="none" stroke="white" strokeWidth="1.3" opacity="0.55" />
+                <circle cx="22" cy="12" r="1.6" fill="white" />
+              </g>
+              <circle cx="12" cy="12" r="2.2" fill="white" />
+            </svg>
             Orbitae
           </div>
           <RequestAccessModal>
@@ -80,8 +86,18 @@ export default function Home() {
             </p>
 
             <form onSubmit={handleWaitlistSubmit} className="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto pt-8">
+              {/* Honeypot — invisible to real visitors, bots that auto-fill every field catch themselves here. */}
+              <input
+                type="text"
+                name="company_website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="absolute w-px h-px opacity-0 -z-10"
+              />
               <input
                 type="email"
+                name="email"
                 required
                 placeholder="Enter your email"
                 value={email}
@@ -182,15 +198,8 @@ export default function Home() {
         </section>
 
         {/* Footer */}
-        <footer className="max-w-7xl mx-auto px-6 pt-20 border-t border-neutral-800 flex flex-col md:flex-row items-center justify-between gap-6 text-sm text-neutral-500">
-            <div>
-               &copy; {new Date().getFullYear()} Orbitae. All rights reserved.
-            </div>
-            <div className="flex gap-6">
-                <a href="#" className="hover:text-white transition-colors">Twitter</a>
-                <a href="#" className="hover:text-white transition-colors">GitHub</a>
-                <a href="#" className="hover:text-white transition-colors">Changelog</a>
-            </div>
+        <footer className="max-w-7xl mx-auto px-6 pt-20 border-t border-neutral-800 text-sm text-neutral-500">
+            &copy; {new Date().getFullYear()} Orbitae. All rights reserved.
         </footer>
       </main>
     </div>
