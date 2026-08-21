@@ -1,18 +1,29 @@
 //! Model-tiered step executor.
 //!
 //! Runs a confirmed plan by giving **each step its own subagent on the step's
-//! assigned model** (haiku/sonnet/opus). Sequential today — safe in the shared
-//! repo, no merge conflicts — and it makes the model tiering provable and
-//! visible ("step 2 → haiku"). Parallelizing independent (disjoint-file) steps
-//! via a git-worktree pool is the documented fast-follow.
+//! assigned model** (haiku/sonnet/opus), which makes the model tiering provable
+//! and visible ("step 2 → haiku").
+//!
+//! **Parallel waves (conservative).** Steps are scheduled into *waves* of
+//! pairwise file-disjoint steps ([`schedule_waves`]); a step with no declared
+//! files, or one overlapping the current wave, starts a new wave. A single-step
+//! wave runs directly in the shared exec tree. A multi-step wave runs each step
+//! in its **own disposable worktree** (branched from a snapshot of the current
+//! exec tree), concurrently — so agents can't clobber one another — then merges
+//! each step's diff back into the exec tree one at a time (single committer).
+//! Because a wave's files are disjoint, the patches never overlap. If one ever
+//! fails to apply (near-impossible under conservative scheduling), that step is
+//! re-run sequentially in the exec tree — no data loss.
 //!
 //! Each step subagent gets a **focused prompt** (goal + prior outcomes + this
 //! step), not the whole project context — narrow scope is cheaper, which is the
 //! token moat in action.
 
+use std::collections::HashSet;
+
 use super::backend::{AgentBackend, BackendEvent, SessionConfig};
 use super::conversation::Conversation;
-use super::error::Result;
+use super::error::{OrchestratorError, Result};
 use super::models::{Plan, PlanStep};
 
 /// Resolve a step's suggested tier to a concrete model, defaulting to mid-tier.
@@ -30,39 +41,184 @@ pub struct StepOutcome {
     pub summary: String,
 }
 
-/// Execute the plan's steps sequentially, each on its own model-tiered subagent.
-/// `on_event` receives every backend event tagged with the step it belongs to.
-pub fn run_tiered<F: FnMut(&BackendEvent, &PlanStep)>(
+/// Group step indices into **waves** of pairwise file-disjoint steps. A step
+/// with no declared files, or whose files overlap the current wave, closes the
+/// wave and starts a new one (conservative: only explicitly-disjoint steps ever
+/// run together). Preserves plan order, so a step never runs before one it might
+/// depend on.
+pub fn schedule_waves(steps: &[PlanStep]) -> Vec<Vec<usize>> {
+    let mut waves: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    let mut cur_files: HashSet<&str> = HashSet::new();
+
+    for (i, step) in steps.iter().enumerate() {
+        let files: Vec<&str> = step
+            .files
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Can this step join the open wave? Only if it declares files and none
+        // of them collide with a file already claimed in the wave.
+        let joins = !cur.is_empty()
+            && !files.is_empty()
+            && files.iter().all(|f| !cur_files.contains(f));
+
+        if joins {
+            for f in &files {
+                cur_files.insert(f);
+            }
+            cur.push(i);
+        } else {
+            if !cur.is_empty() {
+                waves.push(std::mem::take(&mut cur));
+            }
+            cur_files.clear();
+            cur.push(i);
+            for f in &files {
+                cur_files.insert(f);
+            }
+        }
+
+        // A step with unknown scope (no declared files) must stand alone: close
+        // its wave immediately so nothing else joins it.
+        if files.is_empty() {
+            waves.push(std::mem::take(&mut cur));
+            cur_files.clear();
+        }
+    }
+    if !cur.is_empty() {
+        waves.push(cur);
+    }
+    waves
+}
+
+/// Run one step on its own model-tiered subagent in `cwd`, streaming events.
+fn run_step<F: Fn(&BackendEvent, &PlanStep) + Sync>(
+    backend: &dyn AgentBackend,
+    base: &SessionConfig,
+    cwd: &str,
+    goal: &str,
+    prior: &[String],
+    step: &PlanStep,
+    on_event: &F,
+) -> Result<StepOutcome> {
+    let cfg = SessionConfig {
+        cwd: cwd.to_string(),
+        model: Some(step_model(step)),
+        ..base.clone()
+    };
+    let convo = Conversation::start(backend, cfg)?;
+    let prompt = build_step_prompt(goal, prior, step);
+    let out = convo.ask_streaming(&prompt, |ev| on_event(ev, step))?;
+    let _ = convo.stop();
+    Ok(StepOutcome {
+        step_id: step.id.clone(),
+        ok: !out.is_error,
+        summary: out.text,
+    })
+}
+
+/// Execute the plan wave by wave: disjoint steps run concurrently in isolated
+/// worktrees, everything else runs sequentially in the shared exec tree. Stops
+/// after the first wave containing a failed step. `on_event` receives every
+/// backend event tagged with the step it belongs to (called from multiple
+/// threads during a parallel wave, hence `Send + Sync`).
+pub fn run_tiered<F: Fn(&BackendEvent, &PlanStep) + Send + Sync>(
     backend: &dyn AgentBackend,
     base: &SessionConfig,
     plan: &Plan,
-    mut on_event: F,
+    on_event: F,
 ) -> Result<Vec<StepOutcome>> {
-    let mut outcomes = Vec::new();
+    let exec_cwd = base.cwd.clone();
+    let mut results: Vec<StepOutcome> = Vec::new();
     let mut prior: Vec<String> = Vec::new();
 
-    for step in &plan.steps {
-        let cfg = SessionConfig {
-            model: Some(step_model(step)),
-            ..base.clone()
-        };
-        let convo = Conversation::start(backend, cfg)?;
-        let prompt = build_step_prompt(&plan.goal, &prior, step);
-        let out = convo.ask_streaming(&prompt, |ev| on_event(ev, step))?;
-        let _ = convo.stop();
+    for wave in schedule_waves(&plan.steps) {
+        // (step index, outcome) for this wave, filled in either path below.
+        let mut wave_outcomes: Vec<(usize, StepOutcome)> = Vec::new();
 
-        let ok = !out.is_error;
-        prior.push(format!("- {} ({})", step.title, if ok { "done" } else { "FAILED" }));
-        outcomes.push(StepOutcome {
-            step_id: step.id.clone(),
-            ok,
-            summary: out.text.clone(),
-        });
-        if !ok {
-            break; // stop the pipeline on the first failed step
+        if wave.len() == 1 {
+            let idx = wave[0];
+            let outcome =
+                run_step(backend, base, &exec_cwd, &plan.goal, &prior, &plan.steps[idx], &on_event)?;
+            wave_outcomes.push((idx, outcome));
+        } else {
+            // Parallel wave: snapshot the exec tree, branch a worktree per step,
+            // run them concurrently, then merge each disjoint diff back in order.
+            let wave_base = super::worktree::snapshot_commit(&exec_cwd).ok_or_else(|| {
+                OrchestratorError::Backend("failed to snapshot exec tree for a parallel wave".into())
+            })?;
+
+            let collected: Vec<(usize, Result<StepOutcome>, Option<String>)> =
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = wave
+                        .iter()
+                        .map(|&idx| {
+                            let exec_cwd = &exec_cwd;
+                            let wave_base = &wave_base;
+                            let on_event = &on_event;
+                            let prior = &prior;
+                            let step = &plan.steps[idx];
+                            let goal = plan.goal.as_str();
+                            scope.spawn(move || {
+                                let wt = match super::worktree::Worktree::create_at(exec_cwd, wave_base)
+                                {
+                                    Ok(w) => w,
+                                    Err(e) => return (idx, Err(e), None),
+                                };
+                                let cwd = wt.path().to_string_lossy().into_owned();
+                                let outcome =
+                                    run_step(backend, base, &cwd, goal, prior, step, on_event);
+                                let patch = super::worktree::capture_patch(&cwd, wave_base);
+                                drop(wt); // dispose the worktree
+                                (idx, outcome, patch)
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|h| h.join().expect("wave step thread panicked"))
+                        .collect()
+                });
+
+            // Merge back sequentially — single committer. Disjoint files ⇒ clean.
+            for (idx, outcome, patch) in collected {
+                let outcome = outcome?;
+                let applied = match patch {
+                    Some(p) => super::worktree::apply_patch(&exec_cwd, &p).map(|_| true),
+                    None => Ok(false), // step made no changes
+                };
+                if let Err(e) = applied {
+                    // Should not happen under conservative scheduling; re-run the
+                    // step directly in the exec tree so nothing is lost.
+                    tracing::warn!("wave merge failed for step {idx} ({e}); re-running sequentially");
+                    let redo =
+                        run_step(backend, base, &exec_cwd, &plan.goal, &prior, &plan.steps[idx], &on_event)?;
+                    wave_outcomes.push((idx, redo));
+                } else {
+                    wave_outcomes.push((idx, outcome));
+                }
+            }
+        }
+
+        // Append in plan order; thread outcomes into `prior`; stop on any failure.
+        wave_outcomes.sort_by_key(|(idx, _)| *idx);
+        let wave_failed = wave_outcomes.iter().any(|(_, o)| !o.ok);
+        for (idx, outcome) in wave_outcomes {
+            prior.push(format!(
+                "- {} ({})",
+                plan.steps[idx].title,
+                if outcome.ok { "done" } else { "FAILED" }
+            ));
+            results.push(outcome);
+        }
+        if wave_failed {
+            break;
         }
     }
-    Ok(outcomes)
+    Ok(results)
 }
 
 /// Build a focused prompt for a single step's subagent.
@@ -159,11 +315,62 @@ mod tests {
             steps: vec![step("a", Some("haiku")), step("b", Some("opus"))],
             created_at: "now".into(),
         };
-        let mut events = 0;
-        let outcomes = run_tiered(&backend, &test_config(), &plan, |_, _| events += 1).unwrap();
+        let events = std::sync::atomic::AtomicUsize::new(0);
+        let outcomes = run_tiered(&backend, &test_config(), &plan, |_, _| {
+            events.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        })
+        .unwrap();
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes.iter().all(|o| o.ok));
-        assert!(events > 0);
+        assert!(events.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    }
+
+    fn step_with_files(title: &str, files: &[&str]) -> PlanStep {
+        PlanStep {
+            files: files.iter().map(|s| s.to_string()).collect(),
+            ..step(title, None)
+        }
+    }
+
+    #[test]
+    fn disjoint_steps_share_a_wave() {
+        let steps = vec![
+            step_with_files("a", &["main.py"]),
+            step_with_files("b", &["page.tsx"]),
+        ];
+        assert_eq!(schedule_waves(&steps), vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn overlapping_steps_split_into_waves() {
+        let steps = vec![
+            step_with_files("a", &["main.py"]),
+            step_with_files("b", &["main.py"]), // collides with a
+        ];
+        assert_eq!(schedule_waves(&steps), vec![vec![0], vec![1]]);
+    }
+
+    #[test]
+    fn no_declared_files_runs_solo() {
+        let steps = vec![
+            step_with_files("a", &["x.rs"]),
+            step_with_files("b", &[]), // unknown scope → solo
+            step_with_files("c", &["y.rs"]),
+            step_with_files("d", &["z.rs"]),
+        ];
+        // a+? — b has no files so a is solo, b solo, then c+d disjoint.
+        assert_eq!(schedule_waves(&steps), vec![vec![0], vec![1], vec![2, 3]]);
+    }
+
+    #[test]
+    fn three_disjoint_then_one_overlap() {
+        let steps = vec![
+            step_with_files("a", &["1.ts"]),
+            step_with_files("b", &["2.ts"]),
+            step_with_files("c", &["3.ts"]),
+            step_with_files("d", &["2.ts"]), // collides with b → new wave
+        ];
+        assert_eq!(schedule_waves(&steps), vec![vec![0, 1, 2], vec![3]]);
     }
 
     // Guard that a Plan with tiered steps is the shape run_tiered expects.
