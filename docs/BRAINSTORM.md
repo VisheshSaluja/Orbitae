@@ -22,6 +22,22 @@ Each entry follows this format:
 
 ---
 
+## 2026-08-21 — Voice Input via Local Whisper (Kun Chen's OpenSuperWhisper pattern)
+
+### IDEA-023: Dictate to the chat composer via a locally-run Whisper model
+**Status:** DEFERRED — tracked as the next agent-layer phase after Pass 3 (multi-provider harness)
+**Context:** Kun Chen (ex-Meta L8, ships ~40 PRs/day; his tools Lavish/Treehouse/No Mistakes are the direct inspiration for Orbitae's HTML-style plan review and the parallel-wave worktree executor) uses **OpenSuperWhisper** to talk to his agent sessions instead of typing — a free, open-source, fully local dictation app. It's a thin hotkey/UI wrapper around OpenAI's Whisper `large-v3-turbo` model running entirely on-device (no cloud call, no subscription, no account).
+**Idea:** Build the same capability directly into Orbitae's composer, not as a separate app the user has to run alongside it:
+- A mic affordance in the chat composer — press/hold to dictate; transcribed locally, inserted straight into the input, same place typed prompts go.
+- The model checkpoint (~800MB–1.6GB for `large-v3-turbo`) is too large to bundle silently in the installer. Instead: an **"Install voice" button** (in Settings/onboarding) — one click downloads and caches the model locally with a clear size disclosure and progress bar; once done, dictation is fully wired in with zero further setup. Same UX pattern Ollama/LM Studio use for large local models.
+- Fully on-device inference (whisper.cpp, or an MLX/Metal-accelerated path on macOS) — no audio ever leaves the machine, consistent with the app's local-first/vault-security stance.
+**Decision:** Defer implementation until after Pass 3 (multi-provider harness) is done — voice is composer/hardware-integration work, orthogonal to the provider-routing engine, and the harness is higher-leverage right now. Logged here so it isn't lost; the demo already shows a scripted preview of the UX (see `website/src/components/demo/InteractiveDemo.tsx`).
+**Reasoning:** OpenSuperWhisper itself ships macOS-only; Orbitae targets macOS/Windows/Linux, so this needs its own whisper.cpp-based integration rather than shelling out to their app — can't just wrap their binary.
+**Trade-offs:** A large one-time model download; needs a real design pass on where the model cache lives and how "Install voice" surfaces in Settings/onboarding — not scoped yet, just captured as the next thing to design when this phase starts.
+**Related:** `docs/PRODUCT.md` — command-center vision. Pass 3 (multi-provider harness) may share plumbing with the model-download UX (both are "fetch and cache a large local artifact on demand").
+
+---
+
 ## 2026-05-05 — Knowledge Graph System (Karpathy's LLM Wiki Pattern)
 
 ### IDEA-017: Internal Knowledge Graph with LLM-Maintained Wiki

@@ -34,6 +34,7 @@ import {
   Smartphone,
   MessageSquarePlus,
   Trash2,
+  Mic,
 } from "lucide-react";
 
 /**
@@ -80,6 +81,9 @@ const CHAT_TURNS = [
     user: "is that endpoint used anywhere in CI?",
     assistant:
       "Yes — the deploy workflow polls it before flipping traffic, so today it only confirms the process is up.",
+    // Captured via the mic instead of typed — shows off local voice dictation
+    // (roadmap: an on-device Whisper model, installed on demand from Settings).
+    voice: true,
   },
   {
     user: "add a /health/ready endpoint that checks DB and Redis",
@@ -231,23 +235,41 @@ function useTypewriter(text: string, active: boolean, speedMs = 22): string {
 
 // ── Scene 1 — Chat (replica of TerminalTab's thread + composer) ─────────────
 
+type VoicePhase = "listening" | "transcribing" | "done";
+
 const ChatScene: React.FC<{
   stage: number;
   setMaxStage: (n: number) => void;
 }> = ({ stage, setMaxStage }) => {
   const currentTurn = Math.min(Math.floor(stage / 4), CHAT_TURNS.length - 1);
   const isTyping = stage < TOTAL_TURN_STAGES && stage % 4 === 0;
+  const isVoiceTurn = isTyping && !!CHAT_TURNS[currentTurn].voice;
   const typed = useTypewriter(
-    isTyping ? CHAT_TURNS[currentTurn].user : "",
-    isTyping,
+    isTyping && !isVoiceTurn ? CHAT_TURNS[currentTurn].user : "",
+    isTyping && !isVoiceTurn,
   );
 
-  // Typing phase advances once the typewriter finishes (not a fixed timer).
+  // Typed turns advance once the typewriter finishes (not a fixed timer).
   useEffect(() => {
-    if (!isTyping || typed.length < CHAT_TURNS[currentTurn].user.length) return;
+    if (!isTyping || isVoiceTurn || typed.length < CHAT_TURNS[currentTurn].user.length) return;
     const t = setTimeout(() => setMaxStage(stage + 1), 350);
     return () => clearTimeout(t);
-  }, [isTyping, typed, currentTurn, stage, setMaxStage]);
+  }, [isTyping, isVoiceTurn, typed, currentTurn, stage, setMaxStage]);
+
+  // Voice-captured turns act out listening → transcribing → done on a fixed
+  // timeline, then advance the same way a finished typewriter would.
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>("listening");
+  useEffect(() => {
+    if (!isVoiceTurn) {
+      const reset = setTimeout(() => setVoicePhase("listening"), 0);
+      return () => clearTimeout(reset);
+    }
+    const t0 = setTimeout(() => setVoicePhase("listening"), 0);
+    const t1 = setTimeout(() => setVoicePhase("transcribing"), 900);
+    const t2 = setTimeout(() => setVoicePhase("done"), 1500);
+    const t3 = setTimeout(() => setMaxStage(stage + 1), 1900);
+    return () => { clearTimeout(t0); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [isVoiceTurn, stage, setMaxStage]);
 
   // Every other beat (user-shown → thinking → replied → next turn's typing,
   // or the final reply → tool chip → plan card) advances on a fixed timer.
@@ -275,6 +297,9 @@ const ChatScene: React.FC<{
           <React.Fragment key={i}>
             <div className="flex justify-end">
               <div className="max-w-[85%] rounded-2xl bg-foreground text-background px-3.5 py-2 text-[13px] whitespace-pre-wrap">
+                {turn.voice && (
+                  <Mic className="w-3 h-3 inline-block mr-1.5 mb-0.5 opacity-60" />
+                )}
                 {turn.user}
               </div>
             </div>
@@ -326,20 +351,53 @@ const ChatScene: React.FC<{
         </motion.button>
       )}
       {/* The composer — always visible; shows the live typewriter while a
-                turn is being "typed", idle placeholder otherwise. */}
+                turn is being "typed", a listening/transcribing sequence for the
+                voice turn, idle placeholder otherwise. */}
       <div className="pt-2">
         <div className="relative flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5">
           <Sparkles className="w-4 h-4 text-amber-400/70 shrink-0" />
           <span className="flex-1 text-[13px] text-foreground/90">
-            {isTyping && typed.length === 0 && (
-              <span className="text-muted-foreground/40">
-                Ask anything — git status, debug, boot dev, or a full task...
-              </span>
+            {isVoiceTurn ? (
+              voicePhase === "listening" ? (
+                <span className="inline-flex items-center gap-2 text-sky-400">
+                  <Mic className="w-3.5 h-3.5 animate-pulse" /> Listening…
+                  <span className="inline-flex items-end gap-0.5 h-3">
+                    {[0, 1, 2, 3, 4].map((b) => (
+                      <span
+                        key={b}
+                        className="w-0.5 bg-sky-400/70 rounded-full animate-pulse"
+                        style={{ height: `${4 + (b % 3) * 3}px`, animationDelay: `${b * 0.12}s` }}
+                      />
+                    ))}
+                  </span>
+                </span>
+              ) : voicePhase === "transcribing" ? (
+                <span className="text-muted-foreground/60 animate-pulse">Transcribing locally…</span>
+              ) : (
+                CHAT_TURNS[currentTurn].user
+              )
+            ) : (
+              <>
+                {isTyping && typed.length === 0 && (
+                  <span className="text-muted-foreground/40">
+                    Ask anything — git status, debug, boot dev, or a full task...
+                  </span>
+                )}
+                {isTyping ? typed : ""}
+                {isTyping && (
+                  <span className="inline-block w-[1px] h-3.5 bg-foreground/60 align-middle animate-pulse ml-0.5" />
+                )}
+              </>
             )}
-            {isTyping ? typed : ""}
-            {isTyping && (
-              <span className="inline-block w-[1px] h-3.5 bg-foreground/60 align-middle animate-pulse ml-0.5" />
-            )}
+          </span>
+          <span
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium transition-colors ${
+              isVoiceTurn && voicePhase === "listening"
+                ? "text-sky-400 bg-sky-500/10"
+                : "text-muted-foreground/50"
+            }`}
+          >
+            <Mic className="w-3 h-3" />
           </span>
           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-muted-foreground/50">
             <Zap className="w-3 h-3" /> Lean
@@ -350,8 +408,13 @@ const ChatScene: React.FC<{
           <Send className="w-4 h-4 text-muted-foreground/40" />
         </div>
         <p className="text-center text-[11px] text-muted-foreground/50 pt-2">
-          A real conversation first — the agent decides on its own when to plan,
-          no button, no keyword matching.
+          {isVoiceTurn
+            ? voicePhase === "listening"
+              ? "Voice input — talk to it, no need to type."
+              : voicePhase === "transcribing"
+                ? "Running local speech-to-text…"
+                : "Transcribed fully on-device — no audio ever leaves your machine."
+            : "A real conversation first — the agent decides on its own when to plan, no button, no keyword matching."}
         </p>
       </div>
     </div>
