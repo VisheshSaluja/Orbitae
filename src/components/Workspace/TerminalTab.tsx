@@ -59,6 +59,9 @@ interface SessionsTabProps {
     projectPath: string;
     /** Bumped when the Agents tab is re-clicked — return to the conversation home. */
     resetSignal?: number;
+    /** Sent as the first chat message once, on mount — set when the project was
+     *  just created from a description ("Start from an idea"). */
+    initialPrompt?: string | null;
 }
 
 const AGENT_TYPES = [
@@ -79,7 +82,7 @@ function formatElapsed(createdAt: string): string {
     return `${Math.floor(hours / 24)}d`;
 }
 
-export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath, resetSignal }) => {
+export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath, resetSignal, initialPrompt }) => {
     const [sessions, setSessions] = useState<AgentSession[]>([]);
     const [showLauncher, setShowLauncher] = useState(false);
     const [isLaunching, setIsLaunching] = useState(false);
@@ -304,11 +307,17 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
             .then((ans) => {
                 // If the reply is only a plan directive (no prose), drop the empty
                 // bubble; otherwise show the prose. The agent decided to plan.
+                // A turn must NEVER vanish with zero visible feedback — if there's
+                // truly neither prose nor a plan, say so instead of going silent
+                // (this exact silent-drop was a real bug: a bare tool-call marker
+                // with no inline goal used to produce an empty reply AND a null
+                // plan_goal, and the bubble just disappeared with no trace).
                 setThread((t) => {
+                    const fallbackText = ans.plan_goal ? 'Putting together a plan…' : "No response — try rephrasing.";
                     const mapped = t.map((m): ChatMsg => (m.id === aid
-                        ? { id: aid, role: 'assistant', kind: 'text', text: ans.reply || (ans.plan_goal ? 'Putting together a plan…' : '') }
+                        ? { id: aid, role: 'assistant', kind: 'text', text: ans.reply || fallbackText }
                         : m));
-                    const base = ans.reply.trim() === '' && !ans.plan_goal
+                    const base = ans.reply.trim() === '' && ans.plan_goal
                         ? mapped.filter((m) => m.id !== aid)
                         : mapped;
                     // Surface the agent's tool call as a small chip before the plan card.
@@ -320,6 +329,16 @@ export const TerminalTab: React.FC<SessionsTabProps> = ({ projectId, projectPath
             })
             .catch((e) => setThread((t) => t.map((m): ChatMsg => (m.id === aid ? { id: aid, role: 'assistant', kind: 'text', text: `Couldn't answer: ${e}` } : m))));
     }, [projectId, projectPath, handleSmartTask]);
+
+    // Onboarding hands a freshly-created project's description straight to the
+    // agent as the first message — send it exactly once, never on re-mount.
+    const sentInitialPrompt = useRef(false);
+    useEffect(() => {
+        if (!initialPrompt || sentInitialPrompt.current) return;
+        sentInitialPrompt.current = true;
+        handleAsk(initialPrompt);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialPrompt]);
 
     // When a plan's session is created, link it to its card by matching the
     // prompt (the session's `task`) — robust to starting/switching tasks fast.

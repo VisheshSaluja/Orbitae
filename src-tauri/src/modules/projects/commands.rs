@@ -400,6 +400,100 @@ pub async fn git_clone(url: String, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Result of [`git_init`] — surfaced to the UI so it can note when a repo-local
+/// placeholder identity was set (never the user's global git config).
+#[derive(Serialize)]
+pub struct GitInitResult {
+    pub used_fallback_identity: bool,
+}
+
+/// Initialize a fresh git repo at `path` with one initial commit. A new-project
+/// flow calls this unconditionally — the gate's worktree isolation has nothing
+/// to branch from without at least one commit, so onboarding must never hand
+/// off a git-less (or commit-less) folder.
+#[command]
+pub async fn git_init(path: String) -> Result<GitInitResult, String> {
+    let expanded = crate::shared::utils::expand_path(&path);
+    std::fs::create_dir_all(&expanded).map_err(|e| e.to_string())?;
+
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&expanded)
+            .output()
+    };
+
+    let init = run(&["init", "-q"]).map_err(|e| e.to_string())?;
+    if !init.status.success() {
+        return Err(String::from_utf8_lossy(&init.stderr).to_string());
+    }
+
+    // Committing needs an identity. If the user has none configured (locally
+    // or globally), set one scoped to THIS repo only — never touch the user's
+    // global git config.
+    let has_identity = run(&["config", "user.name"])
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    let used_fallback_identity = !has_identity;
+    if used_fallback_identity {
+        let _ = run(&["config", "user.name", "Orbitae"]);
+        let _ = run(&["config", "user.email", "orbitae@localhost"]);
+    }
+
+    let _ = run(&["add", "-A"]);
+    let commit = run(&["commit", "--allow-empty", "-q", "-m", "Initial commit"])
+        .map_err(|e| e.to_string())?;
+    if !commit.status.success() {
+        return Err(String::from_utf8_lossy(&commit.stderr).to_string());
+    }
+
+    Ok(GitInitResult { used_fallback_identity })
+}
+
+/// Whether the `gh` CLI is installed and authenticated — gates the "also
+/// create a GitHub repo" option so onboarding never assumes it's available.
+#[derive(Serialize)]
+pub struct GhStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+}
+
+#[command]
+pub async fn check_gh_status() -> Result<GhStatus, String> {
+    let installed = std::process::Command::new("gh")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !installed {
+        return Ok(GhStatus { installed: false, authenticated: false });
+    }
+    let authenticated = std::process::Command::new("gh")
+        .args(["auth", "status"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    Ok(GhStatus { installed, authenticated })
+}
+
+/// Create a GitHub repo for an already-git-initialized project and push it.
+/// Requires `gh` to be installed and authenticated — check via
+/// [`check_gh_status`] before offering this so it never fails as a surprise.
+#[command]
+pub async fn create_github_repo(path: String, name: String, private: bool) -> Result<String, String> {
+    let expanded = crate::shared::utils::expand_path(&path);
+    let visibility = if private { "--private" } else { "--public" };
+    let output = std::process::Command::new("gh")
+        .args(["repo", "create", &name, visibility, "--source", ".", "--remote", "origin", "--push"])
+        .current_dir(&expanded)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 #[command]
 pub async fn get_git_history(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String> {
     let expanded = crate::shared::utils::expand_path(&path);

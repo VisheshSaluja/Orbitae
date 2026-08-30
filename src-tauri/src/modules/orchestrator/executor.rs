@@ -135,7 +135,26 @@ pub fn run_tiered<F: Fn(&BackendEvent, &PlanStep) + Send + Sync>(
     let mut results: Vec<StepOutcome> = Vec::new();
     let mut prior: Vec<String> = Vec::new();
 
-    for wave in schedule_waves(&plan.steps) {
+    let waves = schedule_waves(&plan.steps);
+    let total_waves = waves.len();
+    tracing::info!(
+        "[gate] wave schedule: {total_waves} wave(s) for {} step(s)",
+        plan.steps.len()
+    );
+
+    for (wave_no, wave) in waves.into_iter().enumerate() {
+        let step_summary: Vec<String> = wave
+            .iter()
+            .map(|&i| format!("{}·{}", i + 1, step_model(&plan.steps[i])))
+            .collect();
+        tracing::info!(
+            "[gate] wave {}/{total_waves}: {} step(s) [{}]{}",
+            wave_no + 1,
+            wave.len(),
+            step_summary.join(", "),
+            if wave.len() > 1 { " running in parallel" } else { "" }
+        );
+
         // (step index, outcome) for this wave, filled in either path below.
         let mut wave_outcomes: Vec<(usize, StepOutcome)> = Vec::new();
 
@@ -193,7 +212,7 @@ pub fn run_tiered<F: Fn(&BackendEvent, &PlanStep) + Send + Sync>(
                 if let Err(e) = applied {
                     // Should not happen under conservative scheduling; re-run the
                     // step directly in the exec tree so nothing is lost.
-                    tracing::warn!("wave merge failed for step {idx} ({e}); re-running sequentially");
+                    tracing::warn!("[gate] wave merge failed for step {idx} ({e}); re-running sequentially");
                     let redo =
                         run_step(backend, base, &exec_cwd, &plan.goal, &prior, &plan.steps[idx], &on_event)?;
                     wave_outcomes.push((idx, redo));
@@ -206,6 +225,11 @@ pub fn run_tiered<F: Fn(&BackendEvent, &PlanStep) + Send + Sync>(
         // Append in plan order; thread outcomes into `prior`; stop on any failure.
         wave_outcomes.sort_by_key(|(idx, _)| *idx);
         let wave_failed = wave_outcomes.iter().any(|(_, o)| !o.ok);
+        let outcome_summary: Vec<String> = wave_outcomes
+            .iter()
+            .map(|(idx, o)| format!("step {} {}", idx + 1, if o.ok { "done" } else { "FAILED" }))
+            .collect();
+        tracing::info!("[gate] wave {}/{total_waves} result: {}", wave_no + 1, outcome_summary.join(" · "));
         for (idx, outcome) in wave_outcomes {
             prior.push(format!(
                 "- {} ({})",
@@ -215,6 +239,7 @@ pub fn run_tiered<F: Fn(&BackendEvent, &PlanStep) + Send + Sync>(
             results.push(outcome);
         }
         if wave_failed {
+            tracing::warn!("[gate] stopping after wave {}/{total_waves} — a step failed", wave_no + 1);
             break;
         }
     }

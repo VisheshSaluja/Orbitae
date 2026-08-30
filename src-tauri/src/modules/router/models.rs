@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// How a matched route should be handled.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteHandler {
     /// Execute a tool directly and return structured data.

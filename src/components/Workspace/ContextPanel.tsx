@@ -9,7 +9,7 @@ import { ErrorBoundary } from '../ui/error-boundary';
 import type { ProjectPlaybook, PlaybookRunWithSteps } from '../../types';
 import {
     Lock, Notebook, BookOpen, Plus,
-    Play, Trash2, Clock, Wand2, FileCode, Check,
+    Play, Trash2, Clock, FileCode, Check,
     Bot, Upload, X,
     type LucideIcon,
 } from 'lucide-react';

@@ -22,6 +22,22 @@ Each entry follows this format:
 
 ---
 
+## 2026-08-22 — Remote Sandbox: Build vs. Integrate on Existing Infra
+
+### IDEA-024: Reframe the per-project remote sandbox around exe.dev-like compute, not a from-scratch VM/container platform
+**Status:** EXPLORING — a real open question, not decided
+**Context:** Researching a $35M-Series-A startup, **exe.dev**, founded by David Crawshaw (Tailscale co-founder/CTO 2019–2024, ex-Google). Their product — disposable per-second sandboxed VMs "for AI agents," SSH + web access, confirmed phone-accessible, thesis "agents need a computer" — is the exact underlying primitive IDEA-016's per-project black box (refined 2026-08-16, see the remote-feature memory) needs. Notably, that 2026-08-16 refinement already named Tailscale as candidate tunnel infra for Phase 2 anywhere-access — exe.dev's founder built that exact thing.
+**Idea:** Don't build a from-scratch container/VM hosting + secure-remote-access stack to compete with a Tailscale-pedigree, well-funded infra team on their home turf. Instead, treat exe.dev (or a peer: e2b, Daytona, Modal, Vercel Sandbox) as the underlying compute layer, and keep Orbitae's engineering focused on what's actually differentiated:
+- One-click, **project-scoped** sandboxing (exactly this repo + its declared manifest/scope — not a generic VM)
+- The QR-code / phone-access UX
+- Running **Orbitae's integrity gate inside the sandbox**, so remote/mobile-triggered agent work is still verified (real checks, adversarial review, evidence receipt) before it reaches a PR — none of exe.dev/e2b/Daytona do this part.
+**Decision:** Not yet made — flagged as the right question to answer with a short build-vs-integrate spike before committing real engineering time to the remote-sandbox phase, whenever that phase starts.
+**Reasoning:** Same lesson as the Munder Difflin comparison (see `docs/COMPETITIVE.md`) — don't out-build a well-funded, well-credentialed infra play on generic capability; win on the part they structurally don't do (verification).
+**Trade-offs:** Integrating means a dependency on a third party's compute/pricing/uptime; building means months of container-security work (namespaces, no `--privileged`, no host mounts, ephemeral revocable credentials — see the security notes already captured in the remote-feature memory) that a $35M team is already doing full-time.
+**Related:** IDEA-016 (original remote-mobile idea), the 2026-08-16 per-project black box refinement (remote-feature memory), `docs/COMPETITIVE.md` "Infrastructure-Layer Adjacent: exe.dev".
+
+---
+
 ## 2026-08-21 — Voice Input via Local Whisper (Kun Chen's OpenSuperWhisper pattern)
 
 ### IDEA-023: Dictate to the chat composer via a locally-run Whisper model

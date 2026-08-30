@@ -27,6 +27,9 @@ const TABS: TabItem[] = [
 interface ProjectWorkspaceProps {
     project: Project;
     onClose: () => void;
+    /** Sent as the first chat message on mount — set when the project was just
+     *  created from a description ("Start from an idea"). */
+    initialPrompt?: string | null;
 }
 
 interface CommandAction {
@@ -37,7 +40,7 @@ interface CommandAction {
     action: () => void;
 }
 
-export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose }) => {
+export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onClose, initialPrompt }) => {
     const [activeTab, setActiveTab] = useState('agents');
     // Bumped when the already-active tab is re-clicked → the panel resets to home.
     const [homeNonce, setHomeNonce] = useState(0);
@@ -145,7 +148,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
     const panelContent = useMemo(() => {
         switch (activeTab) {
             case 'agents':
-                return <TerminalTab projectId={project.id} projectPath={project.path} resetSignal={homeNonce} />;
+                return <TerminalTab projectId={project.id} projectPath={project.path} resetSignal={homeNonce} initialPrompt={initialPrompt} />;
             case 'context':
                 return <ContextPanel projectId={project.id} projectPath={project.path} />;
             case 'connect':
@@ -153,7 +156,7 @@ export const ProjectWorkspace: React.FC<ProjectWorkspaceProps> = ({ project, onC
             default:
                 return null;
         }
-    }, [activeTab, project, homeNonce]);
+    }, [activeTab, project, homeNonce, initialPrompt]);
 
     return (
         <div className="flex flex-col h-screen bg-background">

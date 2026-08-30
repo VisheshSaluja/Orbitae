@@ -661,6 +661,16 @@ pub fn run_validation(
     let diff = working_diff(cwd, base_tree);
     let changed = changed_paths(&diff);
     let mut checks = run_checks(cwd, &changed);
+    tracing::info!(
+        "[gate] checks: {}/{} passed ({})",
+        checks.iter().filter(|c| c.passed).count(),
+        checks.len(),
+        if checks.is_empty() {
+            "no deterministic checks for this project".to_string()
+        } else {
+            checks.iter().map(|c| format!("{}:{}", c.name, if c.passed { "ok" } else { "FAIL" })).collect::<Vec<_>>().join(", ")
+        }
+    );
 
     // The review runs when validation is on and there's an actual change to
     // judge. Cost is bounded (one pass, capped diff, the budget) — no arbitrary
@@ -672,8 +682,15 @@ pub fn run_validation(
         let convo = Conversation::start(backend, config.clone())?;
         let out = convo.ask(&build_review_prompt(intent, &diff))?;
         let _ = convo.stop();
-        if out.is_error { Vec::new() } else { parse_findings(&out.text) }
+        let parsed = if out.is_error { Vec::new() } else { parse_findings(&out.text) };
+        tracing::info!(
+            "[gate] adversarial review: {} finding(s){}",
+            parsed.len(),
+            if out.is_error { " (review turn errored)" } else { "" }
+        );
+        parsed
     } else {
+        tracing::info!("[gate] adversarial review: skipped (validation off or no diff)");
         Vec::new()
     };
 
@@ -795,6 +812,7 @@ pub fn run_validation(
         auto_fixed.len(),
         findings.iter().filter(|f| f.action == FindingAction::Escalate).count(),
     );
+    tracing::info!("[gate] verdict: {risk_level:?} — {summary} ({})", risk_reasons.join("; "));
 
     // Ship the diff to the UI viewer so findings render anchored to the code.
     let diff_view: String = diff.chars().take(DIFF_VIEW_CAP).collect();

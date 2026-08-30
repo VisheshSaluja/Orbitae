@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
     ShieldCheck, Check, XCircle, AlertTriangle, RotateCcw, Loader2,
     CheckCircle2, MessageCircleQuestion, FileDiff, ChevronRight, ChevronDown,
-    MessageSquarePlus, Trash2, Sparkles,
+    MessageSquarePlus, Trash2, Sparkles, Wrench,
 } from 'lucide-react';
 import type { ValidationReport, Finding, RiskLevel, ReviewComment } from '../../lib/orchestrator';
 import { AnnotationOverlay } from './AnnotationOverlay';
@@ -107,6 +107,14 @@ function firstLine(s: string): string {
 
 const AUTO_COLLAPSE_ROWS = 40;
 
+/** A gate-surfaced finding, turned into the same shape a human annotation
+ *  would produce — so "fix what the gate flagged" reuses the existing
+ *  focused apply-comments path (same worktree, one targeted turn) instead of
+ *  the chat spinning up a whole new plan with no idea what the findings were. */
+function findingToComment(f: Finding): ReviewComment {
+    return { file: f.file, code: f.anchor, comment: `${f.title} — ${f.detail}` };
+}
+
 // ---- rendering -------------------------------------------------------------
 
 const RISK_STYLES: Record<RiskLevel, { label: string; cls: string }> = {
@@ -131,6 +139,10 @@ export const DiffReview: React.FC<DiffReviewProps> = ({ report, onRerun, busy, o
     const idc = useRef(0);
     const diffRef = useRef<HTMLDivElement>(null);
     const files = useMemo(() => parseDiff(report.diff || ''), [report.diff]);
+
+    // Fix a single finding the same way the bulk button does — one focused
+    // comment, applied via the existing worktree-local apply-comments path.
+    const onFix = onApplyComments ? (f: Finding) => onApplyComments([findingToComment(f)]) : undefined;
 
     const escalations = report.findings.filter((f) => f.action === 'escalate');
     const visible = hideWarnings ? escalations.filter((f) => f.severity === 'error') : escalations;
@@ -255,12 +267,23 @@ export const DiffReview: React.FC<DiffReviewProps> = ({ report, onRerun, busy, o
                                 {f.file && <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0 truncate max-w-[40%]">{f.file.split('/').pop()}</span>}
                             </button>
                         ))}
+                        {onApplyComments && (
+                            <button
+                                onClick={() => onApplyComments(visible.map(findingToComment))}
+                                disabled={applying}
+                                title="Send every finding above back to an agent as a targeted fix — same worktree, no new plan."
+                                className="flex items-center gap-1.5 text-[11px] font-medium text-violet-400 hover:bg-violet-500/10 rounded-md px-2 py-1 -mx-2 disabled:opacity-40">
+                                {applying
+                                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Fixing…</>
+                                    : <><Wrench className="w-3.5 h-3.5" /> Fix {visible.length} flagged finding{visible.length > 1 ? 's' : ''}</>}
+                            </button>
+                        )}
                     </div>
                 )}
 
                 {general.length > 0 && (
                     <div className="space-y-1.5">
-                        {general.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} />)}
+                        {general.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} onFix={onFix} />)}
                     </div>
                 )}
 
@@ -279,7 +302,7 @@ export const DiffReview: React.FC<DiffReviewProps> = ({ report, onRerun, busy, o
                                 commentsByRow={commentsByRow} fileComments={commentsByFile.get(fi) ?? []} onRemoveComment={removeComment}
                                 open={expanded[fi] ?? file.rows.length <= AUTO_COLLAPSE_ROWS}
                                 onToggle={() => setExpanded((e) => ({ ...e, [fi]: !(e[fi] ?? file.rows.length <= AUTO_COLLAPSE_ROWS) }))}
-                                onAsk={onAsk} />
+                                onAsk={onAsk} onFix={onFix} />
                         ))}
                     </div>
                 )}
@@ -317,7 +340,8 @@ const FileBlock: React.FC<{
     open: boolean;
     onToggle: () => void;
     onAsk?: (f: Finding) => void;
-}> = ({ file, fileIndex, rowPin, fileFindings, idOf, commentsByRow, fileComments, onRemoveComment, open, onToggle, onAsk }) => {
+    onFix?: (f: Finding) => void;
+}> = ({ file, fileIndex, rowPin, fileFindings, idOf, commentsByRow, fileComments, onRemoveComment, open, onToggle, onAsk, onFix }) => {
     const headerFindings = rowPin.get(`${fileIndex}:-1`) ?? [];
     const headerComments = commentsByRow.get(`${fileIndex}:-1`) ?? [];
     return (
@@ -338,7 +362,7 @@ const FileBlock: React.FC<{
 
             {(headerFindings.length > 0 || headerComments.length > 0) && (
                 <div className="px-2 py-1.5 space-y-1.5 bg-card">
-                    {headerFindings.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} />)}
+                    {headerFindings.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} onFix={onFix} />)}
                     {headerComments.map((c) => <UserCommentCard key={c.id} c={c} onRemove={() => onRemoveComment(c.id)} />)}
                 </div>
             )}
@@ -358,7 +382,7 @@ const FileBlock: React.FC<{
                                             <tr>
                                                 <td colSpan={2} className="p-0">
                                                     <div className="px-2 py-1.5 space-y-1.5 bg-card border-y border-border/40">
-                                                        {findings.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} />)}
+                                                        {findings.map((f) => <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} onFix={onFix} />)}
                                                         {rowComments.map((c) => <UserCommentCard key={c.id} c={c} onRemove={() => onRemoveComment(c.id)} />)}
                                                     </div>
                                                 </td>
@@ -375,7 +399,7 @@ const FileBlock: React.FC<{
                     {fileFindings.filter((f) => !headerFindings.includes(f)).length > 0 && (
                         <div className="px-2 py-1.5 space-y-1.5 bg-card">
                             {fileFindings.filter((f) => !headerFindings.includes(f)).map((f) => (
-                                <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} />
+                                <FindingCard key={idOf.get(f)} id={idOf.get(f)} f={f} onAsk={onAsk} onFix={onFix} />
                             ))}
                         </div>
                     )}
@@ -420,7 +444,7 @@ const UserCommentCard: React.FC<{ c: UserComment; onRemove: () => void }> = ({ c
     </div>
 );
 
-const FindingCard: React.FC<{ f: Finding; id?: string; onAsk?: (f: Finding) => void }> = ({ f, id, onAsk }) => {
+const FindingCard: React.FC<{ f: Finding; id?: string; onAsk?: (f: Finding) => void; onFix?: (f: Finding) => void }> = ({ f, id, onAsk, onFix }) => {
     const isError = f.severity === 'error';
     return (
         <div id={id} className={`scroll-mt-4 rounded-md border p-2.5 ${isError ? 'border-red-500/25 bg-red-500/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
@@ -432,12 +456,20 @@ const FindingCard: React.FC<{ f: Finding; id?: string; onAsk?: (f: Finding) => v
                 <span className={`text-[9px] px-1 py-0.5 rounded uppercase font-semibold shrink-0 ${isError ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>{f.severity}</span>
             </div>
             <div className="text-[11px] text-muted-foreground mt-1 font-sans leading-relaxed">{f.detail}</div>
-            {onAsk && (
-                <button onClick={() => onAsk(f)}
-                    className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground">
-                    <MessageCircleQuestion className="w-3 h-3" /> Ask about this
-                </button>
-            )}
+            <div className="flex items-center gap-3 mt-1.5">
+                {onFix && (
+                    <button onClick={() => onFix(f)}
+                        className="inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300">
+                        <Wrench className="w-3 h-3" /> Fix this
+                    </button>
+                )}
+                {onAsk && (
+                    <button onClick={() => onAsk(f)}
+                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground">
+                        <MessageCircleQuestion className="w-3 h-3" /> Ask about this
+                    </button>
+                )}
+            </div>
         </div>
     );
 };

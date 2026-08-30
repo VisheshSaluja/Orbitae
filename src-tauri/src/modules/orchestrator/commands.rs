@@ -86,22 +86,29 @@ const PLAN_DIRECTIVE: &str = "%%CREATE_PLAN%%";
 /// Split a chat reply into (prose-to-show, optional plan goal). If the agent
 /// emitted the `create_plan` directive on a line, that line is stripped from the
 /// visible prose and its goal returned.
-fn split_plan_directive(text: &str) -> (String, Option<String>) {
-    let mut goal: Option<String> = None;
+/// (visible prose, tool invoked, inline goal — only if the model put one on the
+/// directive's own line). Kept separate from "was the tool invoked at all"
+/// because a model that emits the bare marker with no inline text still
+/// invoked the tool — the caller falls back to the user's own message as the
+/// goal in that case, so a plan is never silently dropped.
+fn split_plan_directive(text: &str) -> (String, bool, Option<String>) {
+    let mut invoked = false;
+    let mut inline_goal: Option<String> = None;
     let kept: Vec<&str> = text
         .lines()
         .filter(|line| match line.find(PLAN_DIRECTIVE) {
             Some(idx) => {
+                invoked = true;
                 let g = line[idx + PLAN_DIRECTIVE.len()..].trim();
                 if !g.is_empty() {
-                    goal = Some(g.to_string());
+                    inline_goal = Some(g.to_string());
                 }
                 false // drop the directive line from the shown reply
             }
             None => true,
         })
         .collect();
-    (kept.join("\n").trim().to_string(), goal)
+    (kept.join("\n").trim().to_string(), invoked, inline_goal)
 }
 
 /// A snapshot of a session for the frontend.
@@ -313,8 +320,12 @@ pub async fn orchestrator_execute(
     if let Some(base) = base_tree.as_deref() {
         let _ = save_base_tree(pool.inner(), &session_id, base).await;
     }
-    if let Some(ref wt) = worktree_path {
-        let _ = save_worktree_path(pool.inner(), &session_id, wt).await;
+    match &worktree_path {
+        Some(wt) => {
+            let _ = save_worktree_path(pool.inner(), &session_id, wt).await;
+            tracing::info!("[gate] isolated worktree created: {wt}");
+        }
+        None => tracing::warn!("[gate] worktree isolation failed; executing in the project directory"),
     }
 
     // Execution runs in the isolated worktree; the plan's file paths are the same
@@ -487,7 +498,10 @@ pub async fn orchestrator_chat(
         if out.is_error {
             return Err(out.stderr.trim().to_string());
         }
-        let (reply, plan_goal) = split_plan_directive(&out.text);
+        let (reply, invoked, inline_goal) = split_plan_directive(&out.text);
+        // The tool was invoked even if the model didn't put a goal on the same
+        // line — fall back to the user's own words rather than drop the plan.
+        let plan_goal = if invoked { Some(inline_goal.unwrap_or_else(|| message.clone())) } else { None };
         Ok(ChatReply { reply, plan_goal })
     })
     .await
@@ -673,11 +687,18 @@ pub async fn orchestrator_create_pr(
     // Commit from the isolated worktree (if any) — the branch lands in the shared
     // repo; the main working tree is never touched.
     let cwd = effective_cwd(pool.inner(), &session_id, &project_path).await;
+    tracing::info!("[gate] receipt built ({} bytes) — committing and opening PR", body.len());
     let result = tokio::task::spawn_blocking(move || -> Result<super::pr::PrResult, String> {
         super::pr::create_pr(&super::pr::PrRequest { cwd, title, body }).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("task join: {e}"))??;
+    tracing::info!(
+        "[gate] PR stage: committed={} branch={} → {}",
+        result.committed,
+        result.branch,
+        result.pr_url.as_deref().or(result.compare_url.as_deref()).unwrap_or("(no URL)")
+    );
 
     // The change is now on a branch — dispose the worktree and clear it.
     if result.committed {
@@ -958,31 +979,41 @@ mod chat_tests {
     use super::split_plan_directive;
 
     #[test]
-    fn plain_prose_yields_no_goal() {
-        let (reply, goal) = split_plan_directive("Here's how /health works.\nIt returns ok.");
+    fn plain_prose_yields_no_invocation() {
+        let (reply, invoked, goal) = split_plan_directive("Here's how /health works.\nIt returns ok.");
         assert_eq!(reply, "Here's how /health works.\nIt returns ok.");
+        assert!(!invoked);
         assert_eq!(goal, None);
     }
 
     #[test]
     fn directive_is_extracted_and_stripped() {
         let text = "Sure, I'll add readiness.\n%%CREATE_PLAN%% add a /health/ready endpoint that checks DB and Redis";
-        let (reply, goal) = split_plan_directive(text);
+        let (reply, invoked, goal) = split_plan_directive(text);
         assert_eq!(reply, "Sure, I'll add readiness.");
+        assert!(invoked);
         assert_eq!(goal.as_deref(), Some("add a /health/ready endpoint that checks DB and Redis"));
     }
 
     #[test]
     fn directive_only_reply_is_empty_prose() {
-        let (reply, goal) = split_plan_directive("%%CREATE_PLAN%% wire up rate limiting");
+        let (reply, invoked, goal) = split_plan_directive("%%CREATE_PLAN%% wire up rate limiting");
         assert_eq!(reply, "");
+        assert!(invoked);
         assert_eq!(goal.as_deref(), Some("wire up rate limiting"));
     }
 
+    /// Regression test: a model that emits the bare marker with nothing after
+    /// it (or on its own line, no other prose) must still be treated as
+    /// invoking the tool — the caller falls back to the user's message as the
+    /// goal. Previously this returned `invoked` info nowhere, `goal: None`,
+    /// and an empty reply — which the frontend then silently dropped the
+    /// whole turn for (no chip, no plan, no error — dead silence).
     #[test]
-    fn empty_goal_directive_is_ignored() {
-        let (reply, goal) = split_plan_directive("ok\n%%CREATE_PLAN%%   ");
+    fn bare_directive_is_invoked_with_no_inline_goal() {
+        let (reply, invoked, goal) = split_plan_directive("ok\n%%CREATE_PLAN%%   ");
         assert_eq!(reply, "ok");
-        assert_eq!(goal, None);
+        assert!(invoked, "the directive was present — the tool WAS invoked");
+        assert_eq!(goal, None, "no inline text — caller must fall back to the user's message");
     }
 }

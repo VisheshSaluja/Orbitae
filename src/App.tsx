@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { AppLayout } from './components/layout/AppLayout';
 import { ProjectCard } from './components/ProjectCard';
 import { ProjectWorkspace } from './components/Workspace/ProjectWorkspace';
+import { NewProjectModal } from './components/NewProjectModal';
 import { useAppStore } from './stores/useAppStore';
 import { Button } from './components/ui/button';
 import { Plus } from 'lucide-react';
@@ -76,12 +77,14 @@ function App() {
   const [cloneName, setCloneName] = useState('');
   const [isCloning, setIsCloning] = useState(false);
 
+  // "Start from an idea" — the description becomes the agent's first message,
+  // so onboarding and the first plan are the same flow.
+  const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
+  const [initialPrompt, setInitialPrompt] = useState<string | null>(null);
+
   const handleNewProject = async (mode: 'create' | 'import' | 'clone' = 'create') => {
     if (mode === 'create') {
-        const name = `Project ${projects.length + 1}`;
-        const path = `~/projects/${name.toLowerCase().replace(' ', '-')}`;
-        await createProject(name, path);
-        toast.success("Project created");
+        setIsNewProjectOpen(true);
     } else if (mode === 'import') {
         setImportName('');
         setImportPath('');
@@ -163,13 +166,20 @@ function App() {
       }
   };
 
+  // Looked up defensively — if the id doesn't (yet) resolve to a project, fall
+  // back to the list view instead of handing ProjectWorkspace an undefined
+  // project and crashing the whole app with no error boundary to catch it.
+  const activeProject = activeTerminalProject ? projects.find(p => p.id === activeTerminalProject) ?? null : null;
+
   return (
     <>
-        {activeTerminalProject ? (
+        {activeProject ? (
             <ProjectWorkspace
-                project={projects.find(p => p.id === activeTerminalProject)!}
+                project={activeProject}
+                initialPrompt={initialPrompt}
                 onClose={() => {
                     setActiveTerminalProject(null);
+                    setInitialPrompt(null);
                     fetchProjects();
                 }}
             />
@@ -360,6 +370,19 @@ function App() {
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+
+        <NewProjectModal
+            open={isNewProjectOpen}
+            onOpenChange={setIsNewProjectOpen}
+            onCreated={async (project, description) => {
+                // Refresh the store's project list BEFORE navigating — otherwise
+                // `projects.find(...)` below misses the brand-new project on the
+                // next render and ProjectWorkspace gets an undefined `project`.
+                await fetchProjects();
+                setInitialPrompt(description);
+                setActiveTerminalProject(project.id);
+            }}
+        />
         <Toaster />
     </>
   );

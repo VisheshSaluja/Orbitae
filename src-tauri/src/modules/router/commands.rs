@@ -9,6 +9,25 @@ use crate::modules::agent_sessions::models::AgentSessionState;
 use crate::modules::agent_sessions::service::AgentSessionService;
 use crate::shared::validation;
 
+/// Direct routes are short utility commands ("show me active sessions",
+/// "check git status") — never multi-sentence descriptions. A long, descriptive
+/// query can still score above `DIRECT_THRESHOLD` against a route purely by
+/// vocabulary overlap (e.g. a pomodoro app's own "session" repeated many times
+/// scored 0.49 against the `active_sessions` route and got silently executed
+/// as a direct command instead of ever reaching chat). Past this many words, a
+/// query is a description, not a command — it must fall through to the
+/// confidence-based orchestrate/fallback path below instead.
+const MAX_DIRECT_ROUTE_WORDS: usize = 15;
+
+/// Whether a classified match should actually execute as a direct command.
+/// Pulled out of `route_request` so the length guard is unit-testable without
+/// standing up Tauri state.
+fn is_direct_execution(confidence: f64, handler: RouteHandler, query: &str) -> bool {
+    confidence >= DIRECT_THRESHOLD
+        && handler == RouteHandler::Direct
+        && query.split_whitespace().count() <= MAX_DIRECT_ROUTE_WORDS
+}
+
 /// Classify a user query and execute or suggest a route.
 ///
 /// The router scores the query against all registered routes using TF-IDF
@@ -55,7 +74,17 @@ pub async fn route_request(
         }
     };
 
-    if route_match.confidence >= DIRECT_THRESHOLD && route_match.handler == RouteHandler::Direct {
+    let scored_as_direct = route_match.confidence >= DIRECT_THRESHOLD && route_match.handler == RouteHandler::Direct;
+    if scored_as_direct && query.split_whitespace().count() > MAX_DIRECT_ROUTE_WORDS {
+        tracing::debug!(
+            route = %route_match.route_id,
+            confidence = %route_match.confidence,
+            word_count = query.split_whitespace().count(),
+            "direct route matched but query is too long to be a command — falling through to orchestrate/fallback"
+        );
+    }
+
+    if is_direct_execution(route_match.confidence, route_match.handler, &query) {
         let data = execute_direct(
             &route_match.route_id,
             pool.inner(),
@@ -259,5 +288,51 @@ async fn execute_direct(
         }
 
         _ => Err(format!("No direct executor for route: {route_id}")),
+    }
+}
+
+#[cfg(test)]
+mod direct_execution_tests {
+    use super::*;
+
+    #[test]
+    fn short_high_confidence_direct_query_executes() {
+        assert!(is_direct_execution(0.49, RouteHandler::Direct, "show me active sessions"));
+    }
+
+    /// Regression test: a long, descriptive build request ("create a pomodoro
+    /// app... store each session the user does...") scored 0.49 against the
+    /// `active_sessions` route purely from repeating "session" many times, and
+    /// was silently executed as a direct command instead of ever reaching
+    /// chat. A query this long can never be a short utility command.
+    fn pomodoro_description() -> String {
+        "create a pomodoro ap, the app needs to be minimilistic and store each \
+         session the user does. No need for any kind of authentication for v1 \
+         we can use local storage for saving the sessions. each session should \
+         have some ability to ask for a review from the user on how the session \
+         went and also log that."
+            .to_string()
+    }
+
+    #[test]
+    fn long_description_never_executes_as_direct_even_at_high_confidence() {
+        assert!(!is_direct_execution(0.49, RouteHandler::Direct, &pomodoro_description()));
+    }
+
+    #[test]
+    fn template_handler_never_executes_as_direct_regardless_of_length() {
+        assert!(!is_direct_execution(0.90, RouteHandler::Template, "short query"));
+    }
+
+    #[test]
+    fn low_confidence_short_query_does_not_execute_as_direct() {
+        assert!(!is_direct_execution(0.10, RouteHandler::Direct, "show me active sessions"));
+    }
+
+    #[test]
+    fn exactly_at_word_limit_still_executes() {
+        let query = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen";
+        assert_eq!(query.split_whitespace().count(), MAX_DIRECT_ROUTE_WORDS);
+        assert!(is_direct_execution(0.5, RouteHandler::Direct, query));
     }
 }
